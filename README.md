@@ -1,36 +1,74 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# PropReview — Proposal Review Application
+
+A production-ready MVP for reviewing RFPs, meeting transcripts, and customer documents. Built with **Next.js 16 + TypeScript + Tailwind CSS v4** and uses the browser's **IndexedDB** (via Dexie.js) for zero-backend data persistence.
+
+## Features
+
+- **Proposal Intake Wizard** — 3-step form: Basic Info → Upload Documents → Review & Submit
+- **Optional Document Uploads** — Separate drag-and-drop zones for RFPs, transcripts, and customer documents
+- **IndexedDB Storage** — All proposals, documents, comments, and scores persist locally
+- **Demo Data** — 4 sample proposals are seeded automatically on first load
+- **Review Workspace** — Editable summary, 5-dimension scorecard, team comments, approve/reject/request actions
+- **Document Viewer** — Sidebar file list + preview for text and images with download links
+- **Dashboard & Proposal List** — Stats cards, search, filters, grid/list toggle
+- **Admin Settings** — Roles, categories, integrations placeholders, backup/export, and data reset
+
+## Tech Stack
+
+- **Framework:** Next.js 16 (App Router)
+- **Language:** TypeScript (strict)
+- **Styling:** Tailwind CSS v4
+- **Icons:** Lucide React
+- **Local DB:** Dexie.js (IndexedDB)
+- **Utilities:** clsx + tailwind-merge
 
 ## Getting Started
 
-First, run the development server:
+Open the `proposal-review-app` folder in VS Code, then run:
 
 ```bash
+npm install
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open [http://localhost:3000](http://localhost:3000) in your browser.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Project Structure
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+```
+proposal-review-app/
+├── app/                    # Next.js App Router pages
+│   ├── dashboard/
+│   ├── proposals/
+│   │   ├── new/
+│   │   └── [id]/
+│   │       ├── documents/
+│   │       └── review/
+│   └── settings/
+├── components/
+│   ├── ui/                 # Reusable UI primitives
+│   ├── layout/             # Shell, sidebar, navbar
+│   ├── file-upload.tsx     # Drag-and-drop upload component
+│   └── proposal-form.tsx   # Intake wizard
+├── lib/
+│   ├── db.ts               # Dexie/IndexedDB data layer
+│   ├── types.ts            # Shared TypeScript types
+│   ├── demo-data.ts        # Seed data
+│   └── utils.ts            # cn, formatters
+```
 
-## Learn More
+## Migration Path to Production Backend
 
-To learn more about Next.js, take a look at the following resources:
+When you are ready to connect a real datasource:
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+1. Replace `lib/db.ts` with a Prisma/PostgreSQL (or MongoDB) client.
+2. Add API routes under `app/api/` for CRUD operations.
+3. Move file storage from base64-in-IndexedDB to S3 / MinIO / Azure Blob.
+4. Add authentication (e.g. NextAuth.js or Clerk) and wire role checks.
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+The UI components and page structure can remain largely unchanged.
 
-## Deploy on Vercel
+## Notes
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+- Large binary files (PDF, DOCX) are stored as base64 in IndexedDB. For production, migrate to object storage.
+- Text extraction currently works for plain-text files. PDF/DOCX parsing can be added later with libraries like `pdf-parse` or `mammoth`.
