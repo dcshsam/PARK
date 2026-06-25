@@ -29,9 +29,9 @@ class ProposalDatabase extends Dexie {
 
   constructor() {
     super("ProposalReviewDB");
-    this.version(3).stores({
+    this.version(4).stores({
       proposals: "++id, title, clientName, status, workflowStage, createdAt, updatedAt",
-      documents: "++id, proposalId, category, uploadedAt",
+      documents: "++id, proposalId, category, uploadedAt, cycleId",
       comments: "++id, proposalId, createdAt",
       workflowCycles: "++id, proposalId, cycleType, iteration, startedAt, [proposalId+cycleType]",
       workflowEvents: "++id, proposalId, cycleId, type, createdAt",
@@ -237,15 +237,6 @@ export async function addProposal(
 
   await db.proposals.add(record);
 
-  const documents: UploadedFile[] = input.documents.map((doc) => ({
-    ...doc,
-    id: crypto.randomUUID(),
-    proposalId: record.id,
-    uploadedAt: now,
-  }));
-
-  if (documents.length) await db.documents.bulkAdd(documents);
-
   const cycle: WorkflowCycle = {
     id: crypto.randomUUID(),
     proposalId: record.id,
@@ -256,6 +247,17 @@ export async function addProposal(
     status: "active",
   };
   await db.workflowCycles.add(cycle);
+
+  const documents: UploadedFile[] = input.documents.map((doc) => ({
+    ...doc,
+    id: crypto.randomUUID(),
+    proposalId: record.id,
+    cycleId: cycle.id,
+    version: 1,
+    uploadedAt: now,
+  }));
+
+  if (documents.length) await db.documents.bulkAdd(documents);
 
   const event: WorkflowEvent = {
     id: crypto.randomUUID(),
@@ -350,18 +352,36 @@ export async function addComment(proposalId: string, author: string, text: strin
 
 export async function addDocument(
   proposalId: string,
-  doc: Omit<UploadedFile, "id" | "proposalId" | "uploadedAt">
+  doc: Omit<UploadedFile, "id" | "proposalId" | "uploadedAt">,
+  options?: { cycleId?: string; version?: number }
 ): Promise<UploadedFile> {
   const db = getDb();
   const document: UploadedFile = {
     ...doc,
     id: crypto.randomUUID(),
     proposalId,
+    cycleId: options?.cycleId,
+    version: options?.version,
     uploadedAt: new Date(),
   };
   await db.documents.add(document);
   await db.proposals.update(proposalId, { updatedAt: new Date() });
   return document;
+}
+
+export async function getNextDocumentVersion(
+  proposalId: string,
+  category: UploadedFile["category"],
+  cycleId?: string
+): Promise<number> {
+  const db = getDb();
+  let query = db.documents.where({ proposalId, category });
+  if (cycleId) {
+    query = db.documents.where({ proposalId, category, cycleId });
+  }
+  const docs = await query.toArray();
+  const maxVersion = docs.reduce((max, d) => Math.max(max, d.version ?? 1), 0);
+  return maxVersion + 1;
 }
 
 export async function deleteDocument(id: string): Promise<void> {

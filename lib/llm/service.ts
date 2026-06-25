@@ -83,6 +83,20 @@ async function chatClaude(
 ): Promise<LlmChatResponse> {
   if (!config.apiKey) throw new Error("Anthropic API key is required");
 
+  const systemMessages = messages.filter((m) => m.role === "system");
+  const nonSystemMessages = messages.filter((m) => m.role !== "system");
+
+  const requestBody: Record<string, unknown> = {
+    model: config.model || "claude-3-5-sonnet-20241022",
+    max_tokens: maxTokens,
+    temperature,
+    messages: nonSystemMessages.map((m) => ({ role: m.role, content: m.content })),
+  };
+
+  if (systemMessages.length > 0) {
+    requestBody.system = systemMessages.map((m) => m.content).join("\n\n");
+  }
+
   const res = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
     headers: {
@@ -90,12 +104,7 @@ async function chatClaude(
       "x-api-key": config.apiKey,
       "anthropic-version": "2023-06-01",
     },
-    body: JSON.stringify({
-      model: config.model || "claude-3-5-sonnet-20241022",
-      max_tokens: maxTokens,
-      temperature,
-      messages: messages.map((m) => ({ role: m.role, content: m.content })),
-    }),
+    body: JSON.stringify(requestBody),
   });
 
   if (!res.ok) {

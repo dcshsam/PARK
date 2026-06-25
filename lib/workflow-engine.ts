@@ -15,7 +15,7 @@ import {
   isFinalReviewStage,
   isReworkStage,
 } from "./workflow-config";
-import type { Proposal, ReviewCycleType, WorkflowStage } from "./types";
+import type { Proposal, ReviewCycleType, WorkflowStage, WorkflowCycle } from "./types";
 
 export interface WorkflowTransition {
   proposal: Proposal;
@@ -27,7 +27,8 @@ export type WorkflowAction =
   | { type: "request_changes"; note?: string; feedbackSummary?: string }
   | { type: "submit_changes"; note?: string }
   | { type: "approve"; note?: string }
-  | { type: "reject"; note?: string };
+  | { type: "reject"; note?: string }
+  | { type: "reject_to_sparc"; note?: string };
 
 function getCurrentActor(): string {
   return "John Doe"; // placeholder until auth is added
@@ -64,6 +65,8 @@ export async function applyWorkflowAction(
       return handleApprove(proposal, stage, actor, action.note);
     case "reject":
       return handleReject(proposal, stage, actor, action.note);
+    case "reject_to_sparc":
+      return handleRejectToSparcOwner(proposal, stage, actor, action.note);
     default:
       throw new Error("Unknown workflow action");
   }
@@ -203,6 +206,33 @@ async function handleApprove(
   return transitionStage(proposal, stage, nextStage, "stage_changed", actor, note);
 }
 
+async function handleRejectToSparcOwner(
+  proposal: Proposal,
+  stage: WorkflowStage,
+  actor: string,
+  note?: string
+): Promise<Proposal> {
+  if (!stage.endsWith("_review")) {
+    throw new Error("Can only reject to SPARC owner from a review stage");
+  }
+
+  const cycleType = getCycleTypeForStage(stage);
+  const reworkStage = `${cycleType}_rework` as WorkflowStage;
+  const currentCycle = proposal.workflowCycles.find((c) => c.id === proposal.currentCycleId);
+  const feedbackSummary = note ?? "Rejected and sent to SPARC Owner";
+
+  if (currentCycle) {
+    await updateWorkflowCycle(currentCycle.id, {
+      status: "rework",
+      iteration: currentCycle.iteration + 1,
+      feedbackSummary,
+      stage: reworkStage,
+    });
+  }
+
+  return transitionStage(proposal, stage, reworkStage, "stage_changed", actor, feedbackSummary);
+}
+
 async function handleReject(
   proposal: Proposal,
   stage: WorkflowStage,
@@ -286,7 +316,7 @@ function getNextCycleType(cycleType: ReviewCycleType): ReviewCycleType | null {
 
 export function getAvailableActions(stage: WorkflowStage | undefined): WorkflowAction["type"][] {
   if (!stage || stage === "approved" || stage === "rejected") return [];
-  if (stage.endsWith("_review")) return ["add_feedback", "approve"];
+  if (stage.endsWith("_review")) return ["add_feedback", "approve", "reject_to_sparc"];
   if (stage.endsWith("_feedback")) return ["request_changes"];
   if (stage.endsWith("_rework")) return ["submit_changes"];
   return [];
@@ -299,6 +329,78 @@ export function getActionLabel(action: WorkflowAction["type"]): string {
     submit_changes: "Submit Changes",
     approve: "Approve & Move Forward",
     reject: "Reject",
+    reject_to_sparc: "Reject & Send to SPARC Owner",
   };
   return labels[action];
+}
+
+export async function startNewVersionCycle(
+  proposalId: string,
+  note?: string
+): Promise<{ cycle: WorkflowCycle; previousCycleId?: string }> {
+  const proposal = await getProposal(proposalId);
+  if (!proposal) throw new Error("Proposal not found");
+
+  const currentCycle = proposal.workflowCycles.find((c) => c.id === proposal.currentCycleId);
+  const isFinalized = proposal.workflowStage === "approved" || proposal.workflowStage === "rejected";
+
+  // If the proposal is finalized, restart from the proposal cycle. Otherwise continue
+  // the current review cycle type so the new version is reviewed in the same context.
+  const cycleType: ReviewCycleType = isFinalized ? "proposal" : currentCycle?.cycleType ?? "proposal";
+  const now = new Date();
+  const reviewStage = `${cycleType}_review` as WorkflowStage;
+  const completedStage = `${cycleType}_completed` as WorkflowStage;
+
+  // Complete the current cycle only if it is the same type and still active.
+  if (currentCycle && currentCycle.cycleType === cycleType && !currentCycle.completedAt) {
+    await updateWorkflowCycle(currentCycle.id, {
+      status: "completed",
+      completedAt: now,
+      stage: completedStage,
+    });
+    await addWorkflowEvent({
+      proposalId,
+      cycleId: currentCycle.id,
+      type: "cycle_completed",
+      fromStage: proposal.workflowStage,
+      toStage: completedStage,
+      actor: getCurrentActor(),
+      note: note ?? "Completed for new version upload",
+      createdAt: now,
+    });
+  }
+
+  const existingCyclesOfType = proposal.workflowCycles.filter((c) => c.cycleType === cycleType);
+  const iteration =
+    existingCyclesOfType.length > 0
+      ? Math.max(...existingCyclesOfType.map((c) => c.iteration)) + 1
+      : 1;
+
+  const newCycle = await addWorkflowCycle({
+    proposalId,
+    cycleType,
+    iteration,
+    stage: reviewStage,
+    startedAt: now,
+    status: "active",
+  });
+
+  await addWorkflowEvent({
+    proposalId,
+    cycleId: newCycle.id,
+    type: "cycle_started",
+    fromStage: proposal.workflowStage,
+    toStage: reviewStage,
+    actor: getCurrentActor(),
+    note: note ?? `New version cycle started (${cycleTypeLabels[cycleType]} iteration ${iteration})`,
+    createdAt: now,
+  });
+
+  await updateProposal(proposalId, {
+    workflowStage: reviewStage,
+    currentCycleId: newCycle.id,
+    status: "under_review",
+  });
+
+  return { cycle: newCycle, previousCycleId: currentCycle?.id };
 }

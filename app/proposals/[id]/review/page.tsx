@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { getProposal, updateProposal, addComment, saveAiReview, getRuleset } from "@/lib/db";
 import type { Proposal, Ruleset, AiReviewResult } from "@/lib/types";
@@ -78,8 +78,10 @@ export default function ReviewPage() {
   const [commentText, setCommentText] = useState("");
   const [saving, setSaving] = useState(false);
   const [workflowLoading, setWorkflowLoading] = useState<WorkflowAction["type"] | null>(null);
+  const [workflowNote, setWorkflowNote] = useState("");
   const [aiReviewLoading, setAiReviewLoading] = useState(false);
   const [aiError, setAiError] = useState<string | null>(null);
+  const aiAutoRunRef = useRef(false);
   const [expandedSections, setExpandedSections] = useState<Set<string>>(new Set());
   const [expandedSubsections, setExpandedSubsections] = useState<Set<string>>(new Set());
 
@@ -118,8 +120,13 @@ export default function ReviewPage() {
     if (!proposal) return;
     setWorkflowLoading(actionType);
     try {
-      const updated = await applyWorkflowAction(proposal.id, { type: actionType });
+      const action: WorkflowAction =
+        actionType === "request_changes"
+          ? { type: actionType, note: workflowNote, feedbackSummary: workflowNote }
+          : { type: actionType, note: workflowNote };
+      const updated = await applyWorkflowAction(proposal.id, action);
       setProposal(updated);
+      setWorkflowNote("");
     } finally {
       setWorkflowLoading(null);
     }
@@ -141,7 +148,7 @@ export default function ReviewPage() {
     setCommentText("");
   };
 
-  const runAiReviewAction = async () => {
+  const runAiReviewAction = useCallback(async () => {
     if (!proposal || !ruleset) return;
     setAiReviewLoading(true);
     setAiError(null);
@@ -156,7 +163,22 @@ export default function ReviewPage() {
     } finally {
       setAiReviewLoading(false);
     }
-  };
+  }, [proposal, ruleset]);
+
+  useEffect(() => {
+    if (
+      !aiAutoRunRef.current &&
+      !loading &&
+      proposal &&
+      ruleset &&
+      !proposal.aiReview &&
+      proposal.documents.length > 0 &&
+      !aiReviewLoading
+    ) {
+      aiAutoRunRef.current = true;
+      runAiReviewAction();
+    }
+  }, [loading, proposal, ruleset, aiReviewLoading, runAiReviewAction]);
 
   const updateRating = (criterionId: string, score: number) => {
     if (!proposal || !ruleset) return;
@@ -266,7 +288,7 @@ export default function ReviewPage() {
               <div>
                 <h2 className="text-lg font-semibold text-text-primary">AI Review</h2>
                 <p className="text-sm text-text-secondary">
-                  Run Claude against the final proposal using the &quot;{ruleset?.name ?? "selected ruleset"}&quot; ruleset.
+                  Claude evaluates the final proposal against the &quot;{ruleset?.name ?? "selected ruleset"}&quot; ruleset, using the supporting documents as context.
                 </p>
               </div>
               <Button
@@ -279,20 +301,50 @@ export default function ReviewPage() {
                 ) : (
                   <Sparkles size={16} className="mr-2" />
                 )}
-                {aiReviewLoading ? "Reviewing..." : "Run AI Review"}
+                {aiReviewLoading ? "Reviewing..." : aiReview ? "Re-run AI Review" : "Run AI Review"}
               </Button>
             </div>
 
             {aiError && (
-              <div className="rounded-xl bg-status-danger-bg p-3 text-sm text-status-danger-text">
+              <div className="rounded-xl bg-status-danger-bg p-4 text-sm text-status-danger-text">
                 <AlertCircle size={16} className="mr-2 inline" />
-                {aiError}
+                <span className="font-medium">{aiError}</span>
+                {aiError.toLowerCase().includes("api key") && (
+                  <p className="mt-1 pl-6">
+                    Add your Anthropic API key to <code className="rounded bg-white/50 px-1">.env.local</code> as{" "}
+                    <code className="rounded bg-white/50 px-1">ANTHROPIC_API_KEY=...</code> or set it in Settings → LLM Provider.
+                  </p>
+                )}
               </div>
             )}
+
             {proposal.documents.length === 0 && (
               <p className="text-sm text-text-secondary">
                 Upload documents before running AI review.
               </p>
+            )}
+
+            {aiReviewLoading && (
+              <div className="rounded-xl border border-border bg-surface p-6 text-center">
+                <Loader2 size={32} className="mx-auto mb-3 animate-spin text-primary-600" />
+                <p className="font-medium text-text-primary">Claude is reviewing the proposal...</p>
+                <p className="text-sm text-text-secondary">
+                  This may take 10–30 seconds depending on the document size.
+                </p>
+              </div>
+            )}
+
+            {!aiReviewLoading && !aiReview && !aiError && proposal.documents.length > 0 && ruleset && (
+              <div className="rounded-xl border border-dashed border-border bg-surface-muted/50 p-6 text-center">
+                <Sparkles size={32} className="mx-auto mb-3 text-text-tertiary" />
+                <p className="font-medium text-text-primary">No AI review yet</p>
+                <p className="mb-4 text-sm text-text-secondary">
+                  Click the button below to have Claude analyze the proposal and generate ratings, strengths, weaknesses, and recommendations.
+                </p>
+                <Button onClick={runAiReviewAction} disabled={aiReviewLoading}>
+                  <Sparkles size={16} className="mr-2" /> Run AI Review
+                </Button>
+              </div>
             )}
 
             {aiReview && (
@@ -523,7 +575,7 @@ export default function ReviewPage() {
                     "w-full justify-start transition-colors",
                     action === "approve"
                       ? "border-green-200 text-green-700 hover:bg-green-50 dark:border-green-500/30 dark:text-green-400 dark:hover:bg-green-500/10"
-                      : action === "reject"
+                      : action === "reject" || action === "reject_to_sparc"
                         ? "border-red-200 text-red-700 hover:bg-red-50 dark:border-red-500/30 dark:text-red-400 dark:hover:bg-red-500/10"
                         : action === "add_feedback" || action === "request_changes"
                           ? "border-amber-200 text-amber-700 hover:bg-amber-50 dark:border-amber-500/30 dark:text-amber-400 dark:hover:bg-amber-500/10"
@@ -534,7 +586,7 @@ export default function ReviewPage() {
                 >
                   {action === "approve" ? (
                     <CheckCircle2 size={18} className="mr-2" />
-                  ) : action === "reject" ? (
+                  ) : action === "reject" || action === "reject_to_sparc" ? (
                     <XCircle size={18} className="mr-2" />
                   ) : action === "add_feedback" ? (
                     <MessageCircle size={18} className="mr-2" />
@@ -544,6 +596,14 @@ export default function ReviewPage() {
                   {workflowLoading === action ? "Processing..." : getActionLabel(action)}
                 </Button>
               ))}
+              {!(proposal.workflowStage === "approved" || proposal.workflowStage === "rejected") && (
+                <Textarea
+                  value={workflowNote}
+                  onChange={(e) => setWorkflowNote(e.target.value)}
+                  placeholder="Add a note or feedback context for the selected action..."
+                  rows={3}
+                />
+              )}
               {(proposal.workflowStage === "approved" || proposal.workflowStage === "rejected") && (
                 <p className="text-sm text-text-secondary">Proposal is finalized.</p>
               )}

@@ -11,7 +11,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Select } from "@/components/ui/select";
-import { ArrowLeft, FileText, MessageSquare, Eye, Pencil, ClipboardList, Route } from "lucide-react";
+import { ArrowLeft, FileText, MessageSquare, Eye, Pencil, ClipboardList, Route, Upload } from "lucide-react";
 import { stageLabels } from "@/lib/workflow-config";
 import { AiReviewScoreCard } from "@/components/ai-review-score-card";
 
@@ -156,11 +156,18 @@ export default function ProposalDetailPage() {
                 <CardTitle>Documents</CardTitle>
                 <CardDescription>Files attached to this review.</CardDescription>
               </div>
-              <Link href={`/proposals/${proposal.id}/documents`}>
-                <Button variant="outline" size="sm">
-                  <Eye size={16} className="mr-1" /> View all
-                </Button>
-              </Link>
+              <div className="flex items-center gap-2">
+                <Link href={`/proposals/${proposal.id}/documents`}>
+                  <Button variant="outline" size="sm">
+                    <Eye size={16} className="mr-1" /> View all
+                  </Button>
+                </Link>
+                <Link href={`/proposals/${proposal.id}/new-version`}>
+                  <Button variant="outline" size="sm">
+                    <Upload size={16} className="mr-1" /> New Version
+                  </Button>
+                </Link>
+              </div>
             </CardHeader>
             <CardContent>
               {proposal.documents.length === 0 ? (
@@ -174,7 +181,9 @@ export default function ProposalDetailPage() {
                         <div className="min-w-0">
                           <p className="truncate text-sm font-medium text-text-primary">{doc.name}</p>
                           <p className="text-xs text-text-tertiary">
-                            {categoryLabels[doc.category]} • {formatBytes(doc.size)}
+                            {categoryLabels[doc.category]}
+                            {doc.version ? ` • v${doc.version}` : ""}
+                            {" "}• {formatBytes(doc.size)}
                           </p>
                         </div>
                       </div>

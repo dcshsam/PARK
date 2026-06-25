@@ -174,7 +174,7 @@ export function WorkflowRoadmap({ proposal, onChange }: WorkflowRoadmapProps) {
                   variant={
                     action === "approve"
                       ? "primary"
-                      : action === "reject"
+                      : action === "reject" || action === "reject_to_sparc"
                         ? "danger"
                         : "outline"
                   }
@@ -184,7 +184,7 @@ export function WorkflowRoadmap({ proposal, onChange }: WorkflowRoadmapProps) {
                     <Loader2 size={16} className="mr-2 animate-spin" />
                   ) : action === "approve" ? (
                     <Check size={16} className="mr-2" />
-                  ) : action === "reject" ? (
+                  ) : action === "reject" || action === "reject_to_sparc" ? (
                     <XCircle size={16} className="mr-2" />
                   ) : action === "add_feedback" ? (
                     <MessageSquare size={16} className="mr-2" />
@@ -198,7 +198,9 @@ export function WorkflowRoadmap({ proposal, onChange }: WorkflowRoadmapProps) {
               ))}
             </div>
 
-            {(availableActions.includes("add_feedback") || availableActions.includes("request_changes")) && (
+            {(availableActions.includes("add_feedback") ||
+              availableActions.includes("request_changes") ||
+              availableActions.includes("reject_to_sparc")) && (
               <Textarea
                 value={note}
                 onChange={(e) => setNote(e.target.value)}
@@ -397,6 +399,7 @@ export function WorkflowRoadmap({ proposal, onChange }: WorkflowRoadmapProps) {
                         {event.type === "feedback_added" && "added feedback on"}
                         {event.type === "changes_submitted" && "submitted changes for"}
                         {event.type === "rejected" && "rejected proposal"}
+                        {event.type === "document_uploaded" && "uploaded document version"}
                         {event.toStage && (
                           <span className="font-medium text-text-primary">
                             {" "}

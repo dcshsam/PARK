@@ -13,6 +13,7 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import { formatDate, cn } from "@/lib/utils";
 import { Search, Plus, Trash2, LayoutGrid, List } from "lucide-react";
+import { ProposalActionModal } from "@/components/proposal-action-modal";
 
 const statusOptions: ProposalStatus[] = ["draft", "submitted", "under_review", "approved", "rejected"];
 
@@ -25,6 +26,7 @@ export function ProposalsPageInner() {
   const [search, setSearch] = useState(initialSearch);
   const [statusFilter, setStatusFilter] = useState<ProposalStatus | "all">("all");
   const [view, setView] = useState<"grid" | "list">("list");
+  const [selectedProposal, setSelectedProposal] = useState<Proposal | null>(null);
 
   const load = () => {
     setLoading(true);
@@ -61,6 +63,14 @@ export function ProposalsPageInner() {
     if (!confirm("Are you sure you want to delete this proposal?")) return;
     await deleteProposal(id);
     load();
+  };
+
+  const openActionModal = (proposal: Proposal) => {
+    setSelectedProposal(proposal);
+  };
+
+  const closeActionModal = () => {
+    setSelectedProposal(null);
   };
 
   return (
@@ -146,11 +156,14 @@ export function ProposalsPageInner() {
                     <Trash2 size={16} />
                   </button>
                 </div>
-                <Link href={`/proposals/${proposal.id}`} className="flex-1">
+                <button
+                  onClick={() => openActionModal(proposal)}
+                  className="flex-1 text-left"
+                >
                   <h3 className="text-base font-semibold text-text-primary group-hover:text-primary-600">
                     {proposal.title}
                   </h3>
-                </Link>
+                </button>
                 <p className="text-sm text-text-secondary">{proposal.clientName}</p>
                 {(proposal.technology || proposal.projectType) && (
                   <div className="mt-2 flex flex-wrap gap-1.5">
@@ -193,11 +206,14 @@ export function ProposalsPageInner() {
                 className="group flex flex-col gap-3 p-4 transition-colors hover:bg-surface-muted/50 sm:flex-row sm:items-center sm:justify-between"
               >
                 <div className="min-w-0">
-                  <Link href={`/proposals/${proposal.id}`}>
+                  <button
+                    onClick={() => openActionModal(proposal)}
+                    className="text-left"
+                  >
                     <h3 className="truncate text-sm font-semibold text-text-primary group-hover:text-primary-600">
                       {proposal.title}
                     </h3>
-                  </Link>
+                  </button>
                   <p className="text-xs text-text-tertiary">{proposal.clientName}</p>
                   {(proposal.technology || proposal.projectType) && (
                     <div className="mt-1 flex flex-wrap gap-1.5">
@@ -240,6 +256,12 @@ export function ProposalsPageInner() {
           </div>
         </Card>
       )}
+
+      <ProposalActionModal
+        proposal={selectedProposal}
+        open={!!selectedProposal}
+        onClose={closeActionModal}
+      />
     </div>
   );
 }

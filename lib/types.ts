@@ -52,7 +52,8 @@ export interface WorkflowEvent {
     | "feedback_added"
     | "changes_submitted"
     | "cycle_completed"
-    | "rejected";
+    | "rejected"
+    | "document_uploaded";
   fromStage?: WorkflowStage;
   toStage?: WorkflowStage;
   actor: string;
@@ -63,6 +64,8 @@ export interface WorkflowEvent {
 export interface UploadedFile {
   id: string;
   proposalId: string;
+  cycleId?: string; // workflow cycle this document version belongs to
+  version?: number; // version number within the cycle/category
   category: DocumentCategory;
   name: string;
   size: number;

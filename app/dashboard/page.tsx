@@ -21,10 +21,12 @@ import {
 } from "lucide-react";
 import { getCycleSummary } from "@/lib/workflow-utils";
 import { formatDurationShort } from "@/lib/workflow-utils";
+import { ProposalActionModal } from "@/components/proposal-action-modal";
 
 export default function DashboardPage() {
   const [proposals, setProposals] = useState<Proposal[]>([]);
   const [loading, setLoading] = useState(true);
+  const [selectedProposal, setSelectedProposal] = useState<Proposal | null>(null);
 
   useEffect(() => {
     getProposals().then((data) => {
@@ -134,10 +136,10 @@ export default function DashboardPage() {
             ) : (
               <div className="divide-y divide-border-subtle">
                 {recent.map((proposal) => (
-                  <Link
+                  <button
                     key={proposal.id}
-                    href={`/proposals/${proposal.id}`}
-                    className="group flex items-center justify-between rounded-lg py-4 transition-colors hover:bg-surface-muted/50"
+                    onClick={() => setSelectedProposal(proposal)}
+                    className="group flex w-full items-center justify-between rounded-lg py-4 text-left transition-colors hover:bg-surface-muted/50"
                   >
                     <div className="min-w-0 px-2">
                       <p className="truncate text-sm font-medium text-text-primary group-hover:text-primary-600">
@@ -159,7 +161,7 @@ export default function DashboardPage() {
                       </span>
                       <Badge variant={proposal.status}>{statusLabels[proposal.status]}</Badge>
                     </div>
-                  </Link>
+                  </button>
                 ))}
               </div>
             )}
@@ -195,6 +197,11 @@ export default function DashboardPage() {
           </CardContent>
         </Card>
       </div>
+      <ProposalActionModal
+        proposal={selectedProposal}
+        open={!!selectedProposal}
+        onClose={() => setSelectedProposal(null)}
+      />
     </div>
   );
 }

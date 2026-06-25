@@ -3,7 +3,9 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { addProposal } from "@/lib/db";
+import { sampleProposal, sampleDocuments } from "@/lib/sample-proposal";
 import type { DocumentCategory, UploadedFile } from "@/lib/types";
+import { categoryLabels } from "@/lib/types";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -11,6 +13,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select } from "@/components/ui/select";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from "@/components/ui/card";
 import { FileUpload } from "@/components/file-upload";
+import { ManualTextInput } from "@/components/manual-text-input";
 import {
   getTechnologies,
   getProjectTypes,
@@ -68,7 +71,42 @@ export function ProposalForm() {
     setForm((prev) => ({ ...prev, documents: { ...prev.documents, [category]: files } }));
   };
 
+  const addManualDoc = (category: DocumentCategory, text: string) => {
+    const blob = new Blob([text]);
+    const encoded = btoa(unescape(encodeURIComponent(text)));
+    const manualDoc: Omit<UploadedFile, "id" | "proposalId" | "uploadedAt"> = {
+      category,
+      name: `${categoryLabels[category]} (manual) ${new Date().toLocaleString()}`,
+      size: blob.size,
+      mimeType: "text/plain",
+      content: encoded,
+      extractedText: text,
+    };
+    setForm((prev) => ({
+      ...prev,
+      documents: { ...prev.documents, [category]: [...prev.documents[category], manualDoc] },
+    }));
+  };
+
   const canProceed = step === 1 ? form.title.trim() && form.clientName.trim() : true;
+
+  const loadSampleData = () => {
+    setForm((prev) => ({
+      ...prev,
+      title: sampleProposal.title,
+      clientName: sampleProposal.clientName,
+      description: sampleProposal.description,
+      technology: sampleProposal.technology,
+      projectType: sampleProposal.projectType,
+      proposalRegion: sampleProposal.proposalRegion,
+      documents: {
+        rfp: sampleDocuments.filter((d) => d.category === "rfp"),
+        transcript: sampleDocuments.filter((d) => d.category === "transcript"),
+        customer_doc: sampleDocuments.filter((d) => d.category === "customer_doc"),
+        final_proposal: sampleDocuments.filter((d) => d.category === "final_proposal"),
+      },
+    }));
+  };
 
   const handleSubmit = async () => {
     setSubmitting(true);
@@ -98,6 +136,18 @@ export function ProposalForm() {
 
   return (
     <div className="mx-auto max-w-4xl space-y-6">
+      <div className="flex items-center justify-end">
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          onClick={loadSampleData}
+          disabled={submitting}
+        >
+          Load sample proposal
+        </Button>
+      </div>
+
       {/* Stepper */}
       <div className="flex items-center justify-between">
         {[1, 2, 3, 4].map((s) => (
@@ -315,12 +365,17 @@ export function ProposalForm() {
             <CardContent className="space-y-6">
               <div className="grid gap-6 md:grid-cols-3">
                 {supportingCategories.map((category) => (
-                  <FileUpload
-                    key={category}
-                    category={category}
-                    files={form.documents[category]}
-                    onChange={(files) => updateDoc(category, files)}
-                  />
+                  <div key={category} className="space-y-3">
+                    <FileUpload
+                      category={category}
+                      files={form.documents[category]}
+                      onChange={(files) => updateDoc(category, files)}
+                    />
+                    <ManualTextInput
+                      category={category}
+                      onAdd={(text) => addManualDoc(category, text)}
+                    />
+                  </div>
                 ))}
               </div>
             </CardContent>
@@ -337,11 +392,15 @@ export function ProposalForm() {
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-6">
-              <div className="mx-auto max-w-2xl">
+              <div className="mx-auto max-w-2xl space-y-3">
                 <FileUpload
                   category="final_proposal"
                   files={form.documents.final_proposal}
                   onChange={(files) => updateDoc("final_proposal", files)}
+                />
+                <ManualTextInput
+                  category="final_proposal"
+                  onAdd={(text) => addManualDoc("final_proposal", text)}
                 />
               </div>
             </CardContent>
@@ -373,7 +432,7 @@ export function ProposalForm() {
                   </div>
                   <div>
                     <dt className="text-xs font-medium uppercase text-text-tertiary">Documents</dt>
-                    <dd className="text-sm text-text-primary">{allDocuments.length} file(s)</dd>
+                    <dd className="text-sm text-text-primary">{allDocuments.length} document(s)</dd>
                   </div>
                   <div>
                     <dt className="text-xs font-medium uppercase text-text-tertiary">Technology</dt>
@@ -414,7 +473,7 @@ export function ProposalForm() {
 
               {allDocuments.length > 0 && (
                 <div>
-                  <h4 className="mb-3 text-sm font-semibold text-text-primary">Attached files</h4>
+                  <h4 className="mb-3 text-sm font-semibold text-text-primary">Attached documents</h4>
                   <ul className="divide-y divide-border-subtle rounded-xl border border-border bg-surface">
                     {allDocuments.map((file) => (
                       <li key={`${file.category}-${file.name}`} className="flex items-center justify-between px-4 py-3">
