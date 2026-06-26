@@ -1,0 +1,9 @@
+---
+applications:
+  - name: proposal-review-app
+    buildpacks:
+      - nodejs_buildpack
+    memory: 512M
+    disk_quota: 1G
+    random-route: true
+    command: npm start

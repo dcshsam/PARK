@@ -13,6 +13,7 @@ import {
   Menu,
   X,
   Layers,
+  BarChart3,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useEffect, useState } from "react";
@@ -24,6 +25,7 @@ const navItems = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { href: "/proposals", label: "Proposals", icon: FileText },
   { href: "/proposals/new", label: "New Review", icon: PlusCircle },
+  { href: "/analytics", label: "Analytics", icon: BarChart3 },
   { href: "/rulesets", label: "Rulesets", icon: Layers },
   { href: "/settings", label: "Settings", icon: Settings },
 ];
@@ -219,6 +221,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
               {[
                 { label: "New proposal review", href: "/proposals/new", icon: PlusCircle },
                 { label: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
+                { label: "Analytics", href: "/analytics", icon: BarChart3 },
                 { label: "Rulesets", href: "/rulesets", icon: Layers },
                 { label: "Settings", href: "/settings", icon: Settings },
               ].map(({ label, href, icon: Icon }) => (

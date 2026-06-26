@@ -32,6 +32,10 @@ yarn-error.log*
 
 # env files (can opt-in for committing if needed)
 .env*
+btp-deploy/.env*
+
+# BTP deploy build output
+btp-deploy/.next/
 
 # vercel
 .vercel
