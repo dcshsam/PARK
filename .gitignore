@@ -36,6 +36,7 @@ btp-deploy/.env*
 
 # BTP deploy build output
 btp-deploy/.next/
+btp-deploy/.next/cache/
 btp-deploy/node_modules/
 
 # vercel
