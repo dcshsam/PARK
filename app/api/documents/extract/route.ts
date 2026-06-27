@@ -25,18 +25,26 @@ export async function POST(request: NextRequest) {
       name.toLowerCase().endsWith(".pdf")
     ) {
       try {
-        const pdfParseModule = await import("pdf-parse");
-        const pdfParse = (pdfParseModule as unknown as { default: (buffer: Buffer) => Promise<{ text?: string }> }).default;
-        const result = await pdfParse(buffer);
-        text = result.text || "";
+        // Try structured Markdown conversion first.
+        const pdf2mdModule = await import("@opendocsg/pdf2md");
+        const pdf2md = (pdf2mdModule as unknown as { default: (buffer: Buffer) => Promise<string> }).default;
+        text = (await pdf2md(buffer)) || "";
       } catch {
-        return NextResponse.json(
-          {
-            error:
-              "PDF parsing failed. Ensure 'pdf-parse' is installed or upload a plain text version.",
-          },
-          { status: 500 }
-        );
+        // Fall back to plain text extraction if Markdown conversion fails.
+        try {
+          const pdfParseModule = await import("pdf-parse");
+          const pdfParse = (pdfParseModule as unknown as { default: (buffer: Buffer) => Promise<{ text?: string }> }).default;
+          const result = await pdfParse(buffer);
+          text = result.text || "";
+        } catch {
+          return NextResponse.json(
+            {
+              error:
+                "PDF parsing failed. Ensure 'pdf-parse' is installed or upload a plain text version.",
+            },
+            { status: 500 }
+          );
+        }
       }
     } else if (
       mimeType ===

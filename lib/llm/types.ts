@@ -10,6 +10,7 @@ export interface ClaudeConfig {
 export interface KimiConfig {
   apiKey: string;
   model: string;
+  baseUrl: string;
 }
 
 export interface SapAiCoreConfig {

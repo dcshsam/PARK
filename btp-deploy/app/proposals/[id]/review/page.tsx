@@ -41,6 +41,7 @@ import {
 } from "@/lib/ruleset-utils";
 import { runAiReview, extractDocumentText } from "@/lib/ai-review-service";
 import { AiReviewScoreCard } from "@/components/ai-review-score-card";
+import { DynamicRequirementsCard } from "@/components/dynamic-requirements-card";
 
 function scoreColor(score: number): string {
   if (score >= 8) return "text-green-600";
@@ -349,6 +350,14 @@ export default function ReviewPage() {
 
             {aiReview && (
               <>
+                <div>
+                  <h3 className="text-base font-semibold text-text-primary">
+                    Rule Check{ruleset?.name ? ` — ${ruleset.name}` : ""}
+                  </h3>
+                  <p className="text-sm text-text-secondary">
+                    Scored against the configured ruleset criteria.
+                  </p>
+                </div>
                 <AiReviewScoreCard
                   aiReview={aiReview}
                   ratings={ratings}
@@ -392,6 +401,25 @@ export default function ReviewPage() {
                           <li key={i}>{s}</li>
                         ))}
                       </ul>
+                    </div>
+                  )}
+                </div>
+
+                <div className="space-y-3">
+                  <div>
+                    <h3 className="text-base font-semibold text-text-primary">
+                      Dynamic Requirements (from RFP &amp; Customer Inputs)
+                    </h3>
+                    <p className="text-sm text-text-secondary">
+                      Requirements derived from the customer&apos;s RFP, transcript, and documents, then checked against the proposal.
+                    </p>
+                  </div>
+                  {aiReview.dynamicReview ? (
+                    <DynamicRequirementsCard dynamicReview={aiReview.dynamicReview} />
+                  ) : (
+                    <div className="rounded-xl border border-dashed border-border bg-surface-muted/50 p-4 text-sm text-text-secondary">
+                      <AlertCircle size={16} className="mr-2 inline" />
+                      Add an RFP, meeting transcript, or customer document, then re-run the AI review to generate dynamic requirements coverage.
                     </div>
                   )}
                 </div>

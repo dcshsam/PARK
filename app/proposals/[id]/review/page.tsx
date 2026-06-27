@@ -8,6 +8,7 @@ import { statusLabels, validationTypeLabels } from "@/lib/types";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Textarea } from "@/components/ui/textarea";
+import { Progress } from "@/components/ui/progress";
 
 import { Badge } from "@/components/ui/badge";
 import { formatDateTime } from "@/lib/utils";
@@ -41,6 +42,7 @@ import {
 } from "@/lib/ruleset-utils";
 import { runAiReview, extractDocumentText } from "@/lib/ai-review-service";
 import { AiReviewScoreCard } from "@/components/ai-review-score-card";
+import { DynamicRequirementsCard } from "@/components/dynamic-requirements-card";
 
 function scoreColor(score: number): string {
   if (score >= 8) return "text-green-600";
@@ -81,7 +83,20 @@ export default function ReviewPage() {
   const [workflowNote, setWorkflowNote] = useState("");
   const [aiReviewLoading, setAiReviewLoading] = useState(false);
   const [aiError, setAiError] = useState<string | null>(null);
+  const [aiProgress, setAiProgress] = useState(0);
+  const [aiStage, setAiStage] = useState("");
   const aiAutoRunRef = useRef(false);
+  // Highest milestone reported by the review service; the displayed bar never
+  // drops below it. The interval below adds a time-based creep on top so the
+  // bar keeps moving during the long single LLM call.
+  const progressFloorRef = useRef(0);
+  const progressTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (progressTimerRef.current) clearInterval(progressTimerRef.current);
+    };
+  }, []);
   const [expandedSections, setExpandedSections] = useState<Set<string>>(new Set());
   const [expandedSubsections, setExpandedSubsections] = useState<Set<string>>(new Set());
 
@@ -152,13 +167,44 @@ export default function ReviewPage() {
     if (!proposal || !ruleset) return;
     setAiReviewLoading(true);
     setAiError(null);
+    setAiProgress(0);
+    setAiStage("Starting review…");
+    progressFloorRef.current = 0;
+
+    const startedAt = Date.now();
+    if (progressTimerRef.current) clearInterval(progressTimerRef.current);
+    progressTimerRef.current = setInterval(() => {
+      // Asymptotic creep toward ~95% over ~30s so the bar always advances, even
+      // while a single LLM call is in flight. Milestone floors pull it ahead.
+      const elapsed = (Date.now() - startedAt) / 1000;
+      const creep = 95 * (1 - Math.exp(-elapsed / 14));
+      setAiProgress((cur) => Math.min(99, Math.max(cur, progressFloorRef.current, creep)));
+    }, 300);
+
+    const stopTimer = () => {
+      if (progressTimerRef.current) clearInterval(progressTimerRef.current);
+      progressTimerRef.current = null;
+    };
+
     try {
       const documentText = await extractDocumentText(proposal);
-      const result = await runAiReview({ proposal, ruleset, documentText });
+      const result = await runAiReview({
+        proposal,
+        ruleset,
+        documentText,
+        onProgress: ({ stage, percent }) => {
+          progressFloorRef.current = Math.max(progressFloorRef.current, percent);
+          setAiStage(stage);
+        },
+      });
       await saveAiReview(result);
       const updated = await getProposal(proposal.id);
       if (updated) setProposal(updated);
+      stopTimer();
+      setAiProgress(100);
+      setAiStage("Review complete");
     } catch (err) {
+      stopTimer();
       setAiError(err instanceof Error ? err.message : "AI review failed");
     } finally {
       setAiReviewLoading(false);
@@ -325,12 +371,20 @@ export default function ReviewPage() {
             )}
 
             {aiReviewLoading && (
-              <div className="rounded-xl border border-border bg-surface p-6 text-center">
-                <Loader2 size={32} className="mx-auto mb-3 animate-spin text-primary-600" />
-                <p className="font-medium text-text-primary">Claude is reviewing the proposal...</p>
-                <p className="text-sm text-text-secondary">
-                  This may take 10–30 seconds depending on the document size.
-                </p>
+              <div className="rounded-xl border border-border bg-surface p-6">
+                <div className="mb-3 flex items-center gap-3">
+                  <Loader2 size={20} className="shrink-0 animate-spin text-primary-600" />
+                  <div className="min-w-0 flex-1">
+                    <p className="font-medium text-text-primary">Claude is reviewing the proposal...</p>
+                    <p className="truncate text-sm text-text-secondary">
+                      {aiStage || "This may take 10–30 seconds depending on the document size."}
+                    </p>
+                  </div>
+                  <span className="shrink-0 text-sm font-semibold tabular-nums text-text-secondary">
+                    {Math.round(aiProgress)}%
+                  </span>
+                </div>
+                <Progress value={aiProgress} />
               </div>
             )}
 
@@ -349,6 +403,14 @@ export default function ReviewPage() {
 
             {aiReview && (
               <>
+                <div>
+                  <h3 className="text-base font-semibold text-text-primary">
+                    Rule Check{ruleset?.name ? ` — ${ruleset.name}` : ""}
+                  </h3>
+                  <p className="text-sm text-text-secondary">
+                    Scored against the configured ruleset criteria.
+                  </p>
+                </div>
                 <AiReviewScoreCard
                   aiReview={aiReview}
                   ratings={ratings}
@@ -392,6 +454,25 @@ export default function ReviewPage() {
                           <li key={i}>{s}</li>
                         ))}
                       </ul>
+                    </div>
+                  )}
+                </div>
+
+                <div className="space-y-3">
+                  <div>
+                    <h3 className="text-base font-semibold text-text-primary">
+                      Dynamic Requirements (from RFP &amp; Customer Inputs)
+                    </h3>
+                    <p className="text-sm text-text-secondary">
+                      Requirements derived from the customer&apos;s RFP, transcript, and documents, then checked against the proposal.
+                    </p>
+                  </div>
+                  {aiReview.dynamicReview ? (
+                    <DynamicRequirementsCard dynamicReview={aiReview.dynamicReview} />
+                  ) : (
+                    <div className="rounded-xl border border-dashed border-border bg-surface-muted/50 p-4 text-sm text-text-secondary">
+                      <AlertCircle size={16} className="mr-2 inline" />
+                      Add an RFP, meeting transcript, or customer document, then re-run the AI review to generate dynamic requirements coverage.
                     </div>
                   )}
                 </div>

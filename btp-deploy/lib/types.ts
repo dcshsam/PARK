@@ -99,6 +99,39 @@ export const validationTypeLabels: Record<ValidationType, string> = {
   suggestion: "Suggestion",
 };
 
+export type RequirementCoverageStatus = "covered" | "partial" | "missing";
+
+export const requirementStatusLabels: Record<RequirementCoverageStatus, string> = {
+  covered: "Covered",
+  partial: "Partial",
+  missing: "Missing",
+};
+
+export type RequirementPriority = "must" | "should" | "nice";
+
+export interface DynamicRequirement {
+  id: string;
+  text: string; // the requirement statement
+  source: DocumentCategory; // rfp | transcript | customer_doc
+  category?: string; // functional / technical / commercial (LLM grouping)
+  priority?: RequirementPriority;
+  status: RequirementCoverageStatus;
+  score: number; // 0-10
+  evidence?: string; // quote/section from the final proposal
+  feedback?: string; // why this status
+  recommendation?: string; // how to close the gap
+}
+
+export interface DynamicReview {
+  score: number; // 0-10 weighted coverage score
+  total: number;
+  coveredCount: number;
+  partialCount: number;
+  missingCount: number;
+  requirements: DynamicRequirement[];
+  generatedAt: Date;
+}
+
 export interface RulesetCriterion {
   id: string;
   title: string;
@@ -159,6 +192,7 @@ export interface AiReviewResult {
   recommendations: string[];
   generatedAt: Date;
   modelUsed?: string;
+  dynamicReview?: DynamicReview; // RFP/transcript-derived requirements coverage
 }
 
 export interface Proposal {

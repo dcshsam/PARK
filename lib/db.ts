@@ -90,6 +90,12 @@ async function hydrateProposal(record: ProposalRecord): Promise<Proposal> {
       ? {
           ...aiReview,
           generatedAt: new Date(aiReview.generatedAt),
+          dynamicReview: aiReview.dynamicReview
+            ? {
+                ...aiReview.dynamicReview,
+                generatedAt: new Date(aiReview.dynamicReview.generatedAt),
+              }
+            : undefined,
         }
       : undefined,
   } as Proposal;

@@ -105,19 +105,25 @@ export function calculateOverallScore(ratings: ReviewRating[], ruleset: Ruleset)
   if (ratings.length === 0 || ruleset.sections.length === 0) return 0;
 
   let weightedSum = 0;
+  let weightSum = 0;
   for (const section of ruleset.sections) {
     for (const subsection of section.subsections) {
       for (const criterion of subsection.criteria) {
         const rating = ratings.find((r) => r.criterionId === criterion.id);
         if (rating) {
-          weightedSum +=
-            rating.score * section.weight * subsection.weight * criterion.weight;
+          // Divide by the accumulated weight so the result is a true weighted
+          // average in [0,10], regardless of whether the ruleset weights are
+          // normalized to sum to 1 or whether some criteria are unrated.
+          const weight = section.weight * subsection.weight * criterion.weight;
+          weightedSum += rating.score * weight;
+          weightSum += weight;
         }
       }
     }
   }
 
-  return Math.round(weightedSum * 10) / 10;
+  if (weightSum === 0) return 0;
+  return Math.round((weightedSum / weightSum) * 10) / 10;
 }
 
 export function getSectionScore(

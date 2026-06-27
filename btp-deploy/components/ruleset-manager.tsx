@@ -338,12 +338,11 @@ export function RulesetManager() {
       if (!prev) return null;
       return {
         ...prev,
-        sections: prev.sections.map((section) => ({
+        // Normalize each level across its siblings so weights sum to 1 per level.
+        sections: normalizeWeights(prev.sections).map((section) => ({
           ...section,
-          ...normalizeWeights([section])[0],
-          subsections: section.subsections.map((subsection) => ({
+          subsections: normalizeWeights(section.subsections).map((subsection) => ({
             ...subsection,
-            ...normalizeWeights([subsection])[0],
             criteria: normalizeWeights(subsection.criteria),
           })),
         })),

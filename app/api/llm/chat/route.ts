@@ -7,11 +7,12 @@ function getServerEnvConfig(): LlmConfig {
     provider: (process.env.NEXT_PUBLIC_DEFAULT_LLM_PROVIDER as LlmConfig["provider"]) || "claude",
     claude: {
       apiKey: process.env.ANTHROPIC_API_KEY ?? "",
-      model: process.env.ANTHROPIC_MODEL ?? "claude-3-5-sonnet-20241022",
+      model: process.env.ANTHROPIC_MODEL ?? "claude-haiku-4-5",
     },
     kimi: {
       apiKey: process.env.KIMI_API_KEY ?? "",
       model: process.env.KIMI_MODEL ?? "moonshot-v1-8k",
+      baseUrl: process.env.KIMI_BASE_URL ?? "https://api.moonshot.cn/v1",
     },
     sapAiCore: {
       authUrl: process.env.SAP_AI_CORE_AUTH_URL ?? "",
@@ -42,6 +43,7 @@ export async function POST(request: NextRequest) {
       kimi: {
         apiKey: body.kimi?.apiKey || envConfig.kimi.apiKey,
         model: body.kimi?.model || envConfig.kimi.model,
+        baseUrl: body.kimi?.baseUrl || envConfig.kimi.baseUrl,
       },
       sapAiCore: {
         authUrl: body.sapAiCore?.authUrl || envConfig.sapAiCore.authUrl,

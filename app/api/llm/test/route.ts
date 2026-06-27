@@ -12,11 +12,12 @@ export async function POST(request: NextRequest) {
       provider,
       claude: {
         apiKey: body.claude?.apiKey ?? "",
-        model: body.claude?.model ?? "claude-3-5-sonnet-20241022",
+        model: body.claude?.model ?? "claude-haiku-4-5",
       },
       kimi: {
         apiKey: body.kimi?.apiKey ?? "",
         model: body.kimi?.model ?? "moonshot-v1-8k",
+        baseUrl: body.kimi?.baseUrl ?? "https://api.moonshot.cn/v1",
       },
       sapAiCore: {
         authUrl: body.sapAiCore?.authUrl ?? "",

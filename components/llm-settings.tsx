@@ -126,13 +126,18 @@ export function LlmSettings() {
             </div>
             <div className="space-y-2">
               <Label htmlFor="claude-model">Model</Label>
-              <Input
+              <Select
                 id="claude-model"
                 value={draft.claude.model}
                 onChange={(e) => updateClaude({ model: e.target.value })}
                 disabled={disabled}
-                placeholder="claude-3-5-sonnet-20241022"
-              />
+              >
+                <option value="claude-haiku-4-5">claude-haiku-4-5 (fast, 200k context)</option>
+                <option value="claude-sonnet-4-6">claude-sonnet-4-6 (balanced, 1M context)</option>
+                <option value="claude-opus-4-8">claude-opus-4-8 (most capable, 1M context)</option>
+                <option value="claude-opus-4-7">claude-opus-4-7 (1M context)</option>
+                <option value="claude-opus-4-6">claude-opus-4-6 (1M context)</option>
+              </Select>
             </div>
           </div>
         )}
@@ -152,13 +157,33 @@ export function LlmSettings() {
             </div>
             <div className="space-y-2">
               <Label htmlFor="kimi-model">Model</Label>
-              <Input
+              <Select
                 id="kimi-model"
                 value={draft.kimi.model}
                 onChange={(e) => updateKimi({ model: e.target.value })}
                 disabled={disabled}
-                placeholder="moonshot-v1-8k"
-              />
+              >
+                <option value="moonshot-v1-8k">moonshot-v1-8k (8k context)</option>
+                <option value="moonshot-v1-32k">moonshot-v1-32k (32k context)</option>
+                <option value="moonshot-v1-128k">moonshot-v1-128k (128k context)</option>
+                <option value="kimi-k2.5">kimi-k2.5 (256k context)</option>
+                <option value="kimi-k2.6">kimi-k2.6 (256k context)</option>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="kimi-base-url">Base URL</Label>
+              <Select
+                id="kimi-base-url"
+                value={draft.kimi.baseUrl}
+                onChange={(e) => updateKimi({ baseUrl: e.target.value })}
+                disabled={disabled}
+              >
+                <option value="https://api.moonshot.cn/v1">China (api.moonshot.cn)</option>
+                <option value="https://api.moonshot.ai/v1">International (api.moonshot.ai)</option>
+              </Select>
+              <p className="text-xs text-text-tertiary">
+                Choose the endpoint that matches where your API key was created.
+              </p>
             </div>
           </div>
         )}

@@ -1,12 +1,38 @@
-import type { Proposal, Ruleset, AiReviewResult, ReviewRating, ValidationType, UploadedFile } from "./types";
-import type { LlmConfig } from "./llm/types";
+import type {
+  Proposal,
+  Ruleset,
+  AiReviewResult,
+  ReviewRating,
+  ValidationType,
+  UploadedFile,
+  DocumentCategory,
+  DynamicRequirement,
+  DynamicReview,
+  RequirementCoverageStatus,
+  RequirementPriority,
+} from "./types";
+import type { LlmConfig, LlmProvider } from "./llm/types";
 import { calculateOverallScore } from "./ruleset-utils";
-import { getActiveLlmConfig } from "./llm/config";
+import { getLlmRequestOverride } from "./llm/config";
+
+// What the browser sends to /api/llm/chat: only the explicit Settings override
+// (if any) plus the active provider. The server fills in the rest from env.
+type ReviewLlmConfig = Partial<LlmConfig> & { provider: LlmProvider };
+
+export interface AiReviewProgress {
+  /** Human-readable description of the current phase. */
+  stage: string;
+  /** Monotonic 0–100 milestone value. The UI treats this as a floor. */
+  percent: number;
+}
+
+export type AiReviewProgressCallback = (progress: AiReviewProgress) => void;
 
 export interface AiReviewOptions {
   proposal: Proposal;
   ruleset: Ruleset;
   documentText: string;
+  onProgress?: AiReviewProgressCallback;
 }
 
 export interface ExtractedDocumentTexts {
@@ -373,7 +399,7 @@ function parseAiResponse(content: string, ruleset: Ruleset): Partial<AiReviewRes
 }
 
 async function callReviewApi(
-  config: LlmConfig,
+  config: ReviewLlmConfig,
   systemPrompt: string,
   userPrompt: string,
   maxTokens = 8192
@@ -389,7 +415,7 @@ async function callReviewApi(
       ],
       temperature: 0.2,
       maxTokens,
-    } as LlmConfig & { messages: unknown[]; temperature: number; maxTokens: number }),
+    }),
   });
 
   if (!response.ok) {
@@ -403,11 +429,13 @@ async function callReviewApi(
   return body.content;
 }
 
-async function runAiReviewFull(options: AiReviewOptions, config: LlmConfig): Promise<AiReviewResult> {
+async function runAiReviewFull(options: AiReviewOptions, config: ReviewLlmConfig): Promise<AiReviewResult> {
   const systemPrompt = buildSystemPrompt(options.ruleset);
   const extracted = extractFinalProposalAndContext(options.proposal);
   const userPrompt = buildUserPrompt(options, extracted);
-  const content = await callReviewApi(config, systemPrompt, userPrompt, 8192);
+  options.onProgress?.({ stage: "Analyzing the proposal against the ruleset…", percent: 12 });
+  const content = await callReviewApi(config, systemPrompt, userPrompt, 16000);
+  options.onProgress?.({ stage: "Compiling rule check results…", percent: 68 });
   const parsed = parseAiResponse(content, options.ruleset);
 
   return {
@@ -427,7 +455,7 @@ async function runAiReviewFull(options: AiReviewOptions, config: LlmConfig): Pro
 
 async function runAiReviewSectionBySection(
   options: AiReviewOptions,
-  config: LlmConfig
+  config: ReviewLlmConfig
 ): Promise<AiReviewResult> {
   const systemPrompt = buildSystemPrompt(options.ruleset);
   const extracted = extractFinalProposalAndContext(options.proposal);
@@ -437,10 +465,18 @@ async function runAiReviewSectionBySection(
   const recommendations: string[] = [];
   const errors: string[] = [];
 
+  const totalSections = options.ruleset.sections.length;
+  let sectionIndex = 0;
   for (const section of options.ruleset.sections) {
+    // Spread the rule-check phase (10% → 68%) evenly across sections.
+    options.onProgress?.({
+      stage: `Reviewing “${section.title}” (${sectionIndex + 1} of ${totalSections})…`,
+      percent: 10 + Math.round((sectionIndex / totalSections) * 58),
+    });
+    sectionIndex += 1;
     try {
       const userPrompt = buildSectionUserPrompt(options.proposal, options.ruleset, section, extracted);
-      const content = await callReviewApi(config, systemPrompt, userPrompt, 4096);
+      const content = await callReviewApi(config, systemPrompt, userPrompt, 8000);
       const parsed = parseAiResponse(content, {
         ...options.ruleset,
         sections: [section],
@@ -458,6 +494,7 @@ async function runAiReviewSectionBySection(
     throw new Error(`Section-by-section review failed: ${errors.join("; ")}`);
   }
 
+  options.onProgress?.({ stage: "Compiling rule check results…", percent: 68 });
   const overallScore = calculateOverallScore(allRatings, options.ruleset);
   const summary = generateSummaryFromRatings(allRatings, options.ruleset, overallScore);
 
@@ -476,20 +513,215 @@ async function runAiReviewSectionBySection(
   };
 }
 
-export async function runAiReview(options: AiReviewOptions): Promise<AiReviewResult> {
-  const config = getActiveLlmConfig();
-  if (!config) {
-    throw new Error("LLM is not configured. Please configure Claude or another provider in Settings > LLM Provider.");
+// ---------------------------------------------------------------------------
+// Dynamic requirements review: requirements are extracted at run time from the
+// customer inputs (RFP / transcript / customer docs) and the final proposal is
+// scored against them. This runs alongside, and independently of, the static
+// ruleset ("rule check") review.
+// ---------------------------------------------------------------------------
+
+const MAX_DYNAMIC_REQUIREMENTS = 30;
+
+function buildDynamicSystemPrompt(): string {
+  return `You are an expert SAP requirements analyst. Your job is to (1) extract the discrete, important requirements that the customer expressed in their supporting documents (RFP, meeting transcript, and other customer documents), and (2) assess how well the vendor's Customer Final Proposal addresses each one.
+
+Extract at most ${MAX_DYNAMIC_REQUIREMENTS} of the most important, distinct requirements. Merge near-duplicates. Do NOT invent requirements that are not grounded in the supporting documents.
+
+For each requirement, determine a coverage status by comparing it against the Customer Final Proposal:
+- "covered": the proposal fully and clearly addresses the requirement.
+- "partial": the proposal addresses the requirement only partially, vaguely, or with gaps.
+- "missing": the proposal does not address the requirement at all.
+
+Also assign each requirement a score from 0 to 10 (0 = not addressed, 10 = fully and excellently addressed).
+
+Return ONLY a valid JSON object with no markdown formatting, code fences, or explanatory text. The JSON must match this structure:
+
+{
+  "requirements": [
+    {
+      "text": "the requirement, stated concisely",
+      "source": "rfp",
+      "category": "functional | technical | commercial | compliance | timeline | other",
+      "priority": "must | should | nice",
+      "status": "covered | partial | missing",
+      "score": 7,
+      "evidence": "1 sentence quoting or referencing where the proposal addresses it (or notes it is absent)",
+      "feedback": "1 sentence explaining the status",
+      "recommendation": "1 sentence on how to fully address the requirement (omit or empty if covered)"
+    }
+  ]
+}
+
+Important:
+- "source" must be one of: rfp, transcript, customer_doc (where the requirement came from).
+- "status" must be one of: covered, partial, missing.
+- "priority" must be one of: must, should, nice.
+- "score" must be an integer between 0 and 10.
+- Base every status, score, and evidence strictly on the actual content of the Customer Final Proposal.
+- Keep every text field to 1 sentence so the JSON stays compact and complete.`;
+}
+
+function buildDynamicUserPrompt(proposal: Proposal, extracted: ExtractedDocumentTexts): string {
+  const finalProposalText = extracted.finalProposalText?.trim() || "";
+  const contextText = extracted.contextText?.trim() || "";
+
+  return `Proposal Title: ${proposal.title}
+Client: ${proposal.clientName}
+Description: ${proposal.description}
+Technology: ${proposal.technology || "Not specified"}
+Project Type: ${proposal.projectType || "Not specified"}
+
+Customer Inputs (extract the requirements FROM these documents):
+---
+${contextText || "No supporting documents available."}
+---
+
+Customer Final Proposal (assess requirement coverage AGAINST this):
+---
+${finalProposalText || "No final proposal text available."}
+---
+
+Instructions:
+- Extract the requirements expressed in the Customer Inputs only.
+- For each requirement, judge whether the Customer Final Proposal covers it (covered / partial / missing).
+- Output MUST be valid, complete JSON matching the structure in the system prompt.
+
+Please provide the JSON requirements coverage output.`;
+}
+
+function coerceRequirementStatus(value: unknown): RequirementCoverageStatus {
+  return value === "covered" || value === "partial" || value === "missing" ? value : "missing";
+}
+
+function coerceRequirementSource(value: unknown): DocumentCategory {
+  return value === "rfp" || value === "transcript" || value === "customer_doc" ? value : "customer_doc";
+}
+
+function coerceRequirementPriority(value: unknown): RequirementPriority | undefined {
+  return value === "must" || value === "should" || value === "nice" ? value : undefined;
+}
+
+function computeCoverageScore(requirements: DynamicRequirement[]): number {
+  const priorityWeight: Record<RequirementPriority, number> = { must: 3, should: 2, nice: 1 };
+  const statusValue: Record<RequirementCoverageStatus, number> = { covered: 1, partial: 0.5, missing: 0 };
+  let weightedSum = 0;
+  let weightSum = 0;
+  for (const req of requirements) {
+    const weight = priorityWeight[req.priority ?? "should"];
+    weightedSum += weight * statusValue[req.status];
+    weightSum += weight;
+  }
+  if (weightSum === 0) return 0;
+  return Math.round((weightedSum / weightSum) * 10 * 10) / 10;
+}
+
+function parseDynamicResponse(content: string): DynamicReview {
+  let jsonText = content.trim();
+  if (jsonText.startsWith("```")) {
+    jsonText = jsonText.replace(/^```[a-z]*\n?/, "").replace(/\n?```$/, "").trim();
   }
 
+  const parsed = JSON.parse(jsonText) as {
+    requirements?: Array<{
+      text?: string;
+      source?: string;
+      category?: string;
+      priority?: string;
+      status?: string;
+      score?: number;
+      evidence?: string;
+      feedback?: string;
+      recommendation?: string;
+    }>;
+  };
+
+  const requirements: DynamicRequirement[] = (parsed.requirements ?? [])
+    .filter((r) => typeof r.text === "string" && r.text.trim())
+    .slice(0, MAX_DYNAMIC_REQUIREMENTS)
+    .map((r) => ({
+      id: crypto.randomUUID(),
+      text: r.text!.trim(),
+      source: coerceRequirementSource(r.source),
+      category: typeof r.category === "string" ? r.category : undefined,
+      priority: coerceRequirementPriority(r.priority),
+      status: coerceRequirementStatus(r.status),
+      score: typeof r.score === "number" ? Math.max(0, Math.min(10, Math.round(r.score))) : 0,
+      evidence: r.evidence || "",
+      feedback: r.feedback || "",
+      recommendation: r.recommendation || "",
+    }));
+
+  return {
+    requirements,
+    total: requirements.length,
+    coveredCount: requirements.filter((r) => r.status === "covered").length,
+    partialCount: requirements.filter((r) => r.status === "partial").length,
+    missingCount: requirements.filter((r) => r.status === "missing").length,
+    score: computeCoverageScore(requirements),
+    generatedAt: new Date(),
+  };
+}
+
+async function runDynamicReview(
+  options: AiReviewOptions,
+  config: ReviewLlmConfig
+): Promise<DynamicReview | undefined> {
+  const extracted = extractFinalProposalAndContext(options.proposal);
+  // Nothing to derive requirements from without supporting customer inputs.
+  if (!extracted.contextText.trim()) return undefined;
+
+  const systemPrompt = buildDynamicSystemPrompt();
+  const userPrompt = buildDynamicUserPrompt(options.proposal, extracted);
+  const content = await callReviewApi(config, systemPrompt, userPrompt, 8000);
+  const review = parseDynamicResponse(content);
+  return review.total > 0 ? review : undefined;
+}
+
+async function runRuleCheckReview(
+  options: AiReviewOptions,
+  config: ReviewLlmConfig
+): Promise<AiReviewResult> {
   try {
     return await runAiReviewFull(options, config);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    if (message.includes("JSON") || message.includes("Unterminated") || err instanceof SyntaxError) {
-      console.warn("Full AI review response was truncated or invalid JSON. Falling back to section-by-section review.", err);
+    const isTokenLimit = /token limit|exceeded.*token|context length|too many tokens/i.test(message);
+    if (
+      isTokenLimit ||
+      message.includes("JSON") ||
+      message.includes("Unterminated") ||
+      err instanceof SyntaxError
+    ) {
+      console.warn(
+        isTokenLimit
+          ? "Full AI review prompt exceeded model token limit. Falling back to section-by-section review."
+          : "Full AI review response was truncated or invalid JSON. Falling back to section-by-section review.",
+        err
+      );
       return runAiReviewSectionBySection(options, config);
     }
     throw err;
   }
+}
+
+export async function runAiReview(options: AiReviewOptions): Promise<AiReviewResult> {
+  const config = getLlmRequestOverride() as ReviewLlmConfig;
+
+  options.onProgress?.({ stage: "Preparing documents…", percent: 4 });
+
+  // Rule check (static ruleset) is the primary review and must succeed.
+  const result = await runRuleCheckReview(options, config);
+
+  // Dynamic requirements coverage runs alongside but must never break the rule
+  // check — failures (or absent customer inputs) just leave it off the result.
+  try {
+    options.onProgress?.({ stage: "Checking requirement coverage…", percent: 74 });
+    const dynamicReview = await runDynamicReview(options, config);
+    if (dynamicReview) result.dynamicReview = dynamicReview;
+  } catch (err) {
+    console.warn("Dynamic requirements review failed; continuing with rule check only.", err);
+  }
+
+  options.onProgress?.({ stage: "Finalizing review…", percent: 98 });
+  return result;
 }

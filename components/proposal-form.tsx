@@ -491,7 +491,7 @@ export function ProposalForm() {
               </Button>
               <Button onClick={handleSubmit} disabled={submitting}>
                 {submitting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
-                Create Proposal Review
+                Proposal Review
               </Button>
             </CardFooter>
           </>

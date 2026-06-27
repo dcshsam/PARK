@@ -9,6 +9,7 @@
     "lint": "eslint"
   },
   "dependencies": {
+    "@opendocsg/pdf2md": "^0.2.7",
     "clsx": "^2.1.1",
     "date-fns": "^4.4.0",
     "dexie": "^4.4.4",

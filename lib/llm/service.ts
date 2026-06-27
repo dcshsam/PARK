@@ -5,6 +5,16 @@ import {
   type LlmTestResult,
 } from "./types";
 
+// Default Claude model. Kept in sync with the Settings dropdown and env defaults.
+// claude-haiku-4-5: current, 200K context, fast and cost-effective for document review.
+const DEFAULT_CLAUDE_MODEL = "claude-haiku-4-5";
+
+// Opus 4.7/4.8 and Fable 5 reject the `temperature` parameter with a 400.
+// Everything else (Sonnet 4.6, Haiku 4.5, Opus 4.6 and older) accepts it.
+function claudeSupportsTemperature(model: string): boolean {
+  return !/^claude-(opus-4-[78]|fable-5|mythos-5)/.test(model);
+}
+
 export async function testLlmConnection(config: LlmConfig): Promise<LlmTestResult> {
   switch (config.provider) {
     case "claude":
@@ -50,7 +60,7 @@ async function testClaude(config: LlmConfig["claude"]): Promise<LlmTestResult> {
         "anthropic-version": "2023-06-01",
       },
       body: JSON.stringify({
-        model: config.model || "claude-3-5-sonnet-20241022",
+        model: config.model || DEFAULT_CLAUDE_MODEL,
         max_tokens: 1,
         messages: [{ role: "user", content: "Hi" }],
       }),
@@ -86,12 +96,16 @@ async function chatClaude(
   const systemMessages = messages.filter((m) => m.role === "system");
   const nonSystemMessages = messages.filter((m) => m.role !== "system");
 
+  const model = config.model || DEFAULT_CLAUDE_MODEL;
   const requestBody: Record<string, unknown> = {
-    model: config.model || "claude-3-5-sonnet-20241022",
+    model,
     max_tokens: maxTokens,
-    temperature,
     messages: nonSystemMessages.map((m) => ({ role: m.role, content: m.content })),
   };
+
+  if (claudeSupportsTemperature(model)) {
+    requestBody.temperature = temperature;
+  }
 
   if (systemMessages.length > 0) {
     requestBody.system = systemMessages.map((m) => m.content).join("\n\n");
@@ -122,35 +136,67 @@ async function chatClaude(
   };
 }
 
+const KIMI_CN_BASE_URL = "https://api.moonshot.cn/v1";
+const KIMI_GLOBAL_BASE_URL = "https://api.moonshot.ai/v1";
+
+async function testKimiEndpoint(
+  config: LlmConfig["kimi"],
+  baseUrl: string
+): Promise<{ ok: boolean; status: number; error?: string }> {
+  const res = await fetch(`${baseUrl.replace(/\/$/, "")}/chat/completions`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${config.apiKey}`,
+    },
+    body: JSON.stringify({
+      model: config.model || "moonshot-v1-8k",
+      max_tokens: 1,
+      messages: [{ role: "user", content: "Hi" }],
+    }),
+  });
+
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    return { ok: false, status: res.status, error: body.error?.message ?? `Kimi returned ${res.status}` };
+  }
+
+  return { ok: true, status: res.status };
+}
+
 async function testKimi(config: LlmConfig["kimi"]): Promise<LlmTestResult> {
-  if (!config.apiKey) {
+  const apiKey = config.apiKey?.trim();
+  if (!apiKey) {
     return { ok: false, provider: "kimi", error: "Kimi API key is required" };
   }
 
-  try {
-    const res = await fetch("https://api.moonshot.cn/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${config.apiKey}`,
-      },
-      body: JSON.stringify({
-        model: config.model || "moonshot-v1-8k",
-        max_tokens: 1,
-        messages: [{ role: "user", content: "Hi" }],
-      }),
-    });
+  const configuredBaseUrl = (config.baseUrl || KIMI_CN_BASE_URL).replace(/\/$/, "");
+  const alternateBaseUrl = configuredBaseUrl === KIMI_CN_BASE_URL ? KIMI_GLOBAL_BASE_URL : KIMI_CN_BASE_URL;
 
-    if (!res.ok) {
-      const body = await res.json().catch(() => ({}));
+  try {
+    const primary = await testKimiEndpoint({ ...config, apiKey }, configuredBaseUrl);
+    if (primary.ok) {
+      return { ok: true, provider: "kimi" };
+    }
+
+    // If primary failed with 401, try the alternate regional endpoint.
+    if (primary.status === 401) {
+      const alternate = await testKimiEndpoint({ ...config, apiKey }, alternateBaseUrl);
+      if (alternate.ok) {
+        return {
+          ok: false,
+          provider: "kimi",
+          error: `Invalid Authentication against ${configuredBaseUrl}. Your key works on ${alternateBaseUrl}. Switch the Base URL to ${alternateBaseUrl} and try again.`,
+        };
+      }
       return {
         ok: false,
         provider: "kimi",
-        error: body.error?.message ?? `Kimi returned ${res.status}`,
+        error: `Invalid Authentication on both ${configuredBaseUrl} and ${alternateBaseUrl}. Your API key may be invalid, expired, or missing required credits.`,
       };
     }
 
-    return { ok: true, provider: "kimi" };
+    return { ok: false, provider: "kimi", error: primary.error ?? `Kimi returned ${primary.status}` };
   } catch (err) {
     return {
       ok: false,
@@ -166,13 +212,15 @@ async function chatKimi(
   temperature: number,
   maxTokens: number
 ): Promise<LlmChatResponse> {
-  if (!config.apiKey) throw new Error("Kimi API key is required");
+  const apiKey = config.apiKey?.trim();
+  if (!apiKey) throw new Error("Kimi API key is required");
 
-  const res = await fetch("https://api.moonshot.cn/v1/chat/completions", {
+  const baseUrl = (config.baseUrl || "https://api.moonshot.cn/v1").replace(/\/$/, "");
+  const res = await fetch(`${baseUrl}/chat/completions`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      Authorization: `Bearer ${config.apiKey}`,
+      Authorization: `Bearer ${apiKey}`,
     },
     body: JSON.stringify({
       model: config.model || "moonshot-v1-8k",

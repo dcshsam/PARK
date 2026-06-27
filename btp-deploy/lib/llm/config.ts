@@ -17,11 +17,12 @@ export function getEnvLlmConfig(): LlmConfig {
     provider: getDefaultProvider(),
     claude: {
       apiKey: process.env.ANTHROPIC_API_KEY ?? "",
-      model: process.env.ANTHROPIC_MODEL ?? "claude-3-5-sonnet-20241022",
+      model: process.env.ANTHROPIC_MODEL ?? "claude-haiku-4-5",
     },
     kimi: {
       apiKey: process.env.KIMI_API_KEY ?? "",
       model: process.env.KIMI_MODEL ?? "moonshot-v1-8k",
+      baseUrl: process.env.KIMI_BASE_URL ?? "https://api.moonshot.cn/v1",
     },
     sapAiCore: {
       authUrl: process.env.SAP_AI_CORE_AUTH_URL ?? "",
@@ -87,4 +88,27 @@ export function getActiveLlmConfig(): LlmConfig {
 
 export function hasLlmConfigOverride(): boolean {
   return getStoredLlmConfig() !== null;
+}
+
+export function getActiveProvider(): LlmProvider {
+  const stored = getStoredLlmConfig();
+  if (stored?.provider && isLlmProvider(stored.provider)) return stored.provider;
+  return getDefaultProvider();
+}
+
+/**
+ * Build the LLM config payload to send from the browser to the server API routes.
+ *
+ * The server holds the authoritative env config (real API keys, model, base URL).
+ * The browser CANNOT read server-only env vars (KIMI_MODEL, KIMI_BASE_URL,
+ * ANTHROPIC_API_KEY, etc. are not NEXT_PUBLIC_), so it must never send
+ * env-derived fallback defaults — doing so would override the correct server
+ * config with hardcoded placeholders (e.g. moonshot-v1-8k / empty key).
+ *
+ * Send ONLY the user's explicit Settings override (if any) plus the active
+ * provider. When there is no override, the server uses its env config verbatim.
+ */
+export function getLlmRequestOverride(): Partial<LlmConfig> {
+  const stored = getStoredLlmConfig();
+  return { ...(stored ?? {}), provider: getActiveProvider() };
 }
