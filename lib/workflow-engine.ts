@@ -23,6 +23,9 @@ export interface WorkflowTransition {
 }
 
 export type WorkflowAction =
+  | { type: "start_due_diligence"; note?: string }
+  | { type: "start_proposal_creation"; note?: string }
+  | { type: "submit_for_review"; note?: string }
   | { type: "add_feedback"; note?: string }
   | { type: "request_changes"; note?: string; feedbackSummary?: string }
   | { type: "submit_changes"; note?: string }
@@ -55,6 +58,12 @@ export async function applyWorkflowAction(
   const actor = getCurrentActor();
 
   switch (action.type) {
+    case "start_due_diligence":
+      return handleStartDueDiligence(proposal, stage, actor, action.note);
+    case "start_proposal_creation":
+      return handleStartProposalCreation(proposal, stage, actor, action.note);
+    case "submit_for_review":
+      return handleSubmitForReview(proposal, stage, actor, action.note);
     case "add_feedback":
       return handleAddFeedback(proposal, stage, actor, action.note);
     case "request_changes":
@@ -70,6 +79,112 @@ export async function applyWorkflowAction(
     default:
       throw new Error("Unknown workflow action");
   }
+}
+
+async function handleStartDueDiligence(
+  proposal: Proposal,
+  stage: WorkflowStage,
+  actor: string,
+  note?: string
+): Promise<Proposal> {
+  if (stage !== "intake") {
+    throw new Error("Due diligence can only start during the creation phase");
+  }
+  if (proposal.dueDiligenceStartedAt) {
+    throw new Error("Due diligence has already started");
+  }
+
+  const now = new Date();
+  await addWorkflowEvent({
+    proposalId: proposal.id,
+    cycleId: proposal.id,
+    type: "due_diligence_started",
+    fromStage: stage,
+    toStage: stage,
+    actor,
+    note: note ?? "Due diligence started",
+    createdAt: now,
+  });
+  await updateProposal(proposal.id, { dueDiligenceStartedAt: now });
+  return getProposal(proposal.id) as Promise<Proposal>;
+}
+
+async function handleStartProposalCreation(
+  proposal: Proposal,
+  stage: WorkflowStage,
+  actor: string,
+  note?: string
+): Promise<Proposal> {
+  if (stage !== "intake") {
+    throw new Error("Proposal creation can only start during the creation phase");
+  }
+  if (!proposal.dueDiligenceStartedAt) {
+    throw new Error("Due diligence must start before proposal creation");
+  }
+  if (proposal.proposalCreationStartedAt) {
+    throw new Error("Proposal creation has already started");
+  }
+
+  const now = new Date();
+  await addWorkflowEvent({
+    proposalId: proposal.id,
+    cycleId: proposal.id,
+    type: "proposal_creation_started",
+    fromStage: stage,
+    toStage: stage,
+    actor,
+    note: note ?? "Proposal creation started",
+    createdAt: now,
+  });
+  await updateProposal(proposal.id, { proposalCreationStartedAt: now });
+  return getProposal(proposal.id) as Promise<Proposal>;
+}
+
+async function handleSubmitForReview(
+  proposal: Proposal,
+  stage: WorkflowStage,
+  actor: string,
+  note?: string
+): Promise<Proposal> {
+  if (stage !== "intake") {
+    throw new Error("Proposal can only be submitted for review from the creation phase");
+  }
+  if (!proposal.proposalCreationStartedAt) {
+    throw new Error("Proposal creation must start before submitting for review");
+  }
+
+  const now = new Date();
+  const reviewStage = "proposal_review" as WorkflowStage;
+
+  // The creation phase has no review cycle — start the proposal review cycle now.
+  const cycle = await addWorkflowCycle({
+    proposalId: proposal.id,
+    cycleType: "proposal",
+    iteration: 1,
+    stage: reviewStage,
+    startedAt: now,
+    status: "active",
+  });
+
+  await addWorkflowEvent({
+    proposalId: proposal.id,
+    cycleId: cycle.id,
+    type: "cycle_started",
+    fromStage: stage,
+    toStage: reviewStage,
+    actor,
+    note: note ?? "Submitted for review — proposal review cycle started",
+    createdAt: now,
+  });
+
+  await updateProposal(proposal.id, {
+    workflowStage: reviewStage,
+    currentCycleId: cycle.id,
+    submittedForReviewAt: now,
+    status: deriveStatus(reviewStage),
+  });
+
+  return getProposal(proposal.id) as Promise<Proposal>;
 }
 
 async function handleAddFeedback(
@@ -314,8 +429,15 @@ function getNextCycleType(cycleType: ReviewCycleType): ReviewCycleType | null {
   return order[idx + 1] ?? null;
 }
 
-export function getAvailableActions(stage: WorkflowStage | undefined): WorkflowAction["type"][] {
+export function getAvailableActions(proposal: Proposal | undefined): WorkflowAction["type"][] {
+  const stage = proposal?.workflowStage;
   if (!stage || stage === "approved" || stage === "rejected") return [];
+  if (stage === "intake") {
+    // Creation phase advances through sequential checkpoints, one action at a time.
+    if (!proposal?.dueDiligenceStartedAt) return ["start_due_diligence"];
+    if (!proposal?.proposalCreationStartedAt) return ["start_proposal_creation"];
+    return ["submit_for_review"];
+  }
   if (stage.endsWith("_review")) return ["add_feedback", "approve", "reject_to_sparc"];
   if (stage.endsWith("_feedback")) return ["request_changes"];
   if (stage.endsWith("_rework")) return ["submit_changes"];
@@ -324,6 +446,9 @@ export function getAvailableActions(stage: WorkflowStage | undefined): WorkflowA
 
 export function getActionLabel(action: WorkflowAction["type"]): string {
   const labels: Record<WorkflowAction["type"], string> = {
+    start_due_diligence: "Start Due Diligence",
+    start_proposal_creation: "Start Proposal Creation",
+    submit_for_review: "Submit for Review",
     add_feedback: "Add Feedback",
     request_changes: "Request Changes",
     submit_changes: "Submit Changes",

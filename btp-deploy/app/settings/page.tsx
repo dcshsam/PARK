@@ -6,13 +6,21 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Switch } from "@/components/ui/switch";
 import { Input } from "@/components/ui/input";
-import { Download, Trash2, Database, Shield, Link as LinkIcon, Users, Palette, Layers, ArrowRight } from "lucide-react";
+import { Download, Trash2, Database, Shield, Link as LinkIcon, Users, Palette } from "lucide-react";
 import { LlmSettings } from "@/components/llm-settings";
 import { WorkspaceSettings } from "@/components/workspace-settings";
 import { ThemeMenu } from "@/components/theme-toggle";
-import Link from "next/link";
+import { RequireAccess } from "@/components/require-access";
 
 export default function SettingsPage() {
+  return (
+    <RequireAccess action="manage_settings">
+      <SettingsContent />
+    </RequireAccess>
+  );
+}
+
+function SettingsContent() {
   const [exporting, setExporting] = useState(false);
   const [roles, setRoles] = useState({
     admin: true,
@@ -128,25 +136,6 @@ export default function SettingsPage() {
                 </Button>
               </div>
             ))}
-          </CardContent>
-        </Card>
-
-        <Card className="lg:col-span-2">
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Layers size={20} className="text-primary-600" /> Review Rulesets
-            </CardTitle>
-            <CardDescription>Manage scoring criteria, sections, and weights for AI review.</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <Link href="/rulesets">
-              <Button variant="outline" className="w-full justify-between">
-                <span className="flex items-center gap-2">
-                  <Layers size={18} /> Open Rulesets
-                </span>
-                <ArrowRight size={16} />
-              </Button>
-            </Link>
           </CardContent>
         </Card>
 

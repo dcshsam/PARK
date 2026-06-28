@@ -98,14 +98,23 @@ export default function DocumentsPage() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center gap-3">
-        <Button variant="outline" size="sm" onClick={() => router.push(`/proposals/${id}`)}>
-          <ArrowLeft size={16} className="mr-1" /> Back to proposal
-        </Button>
-        <div>
-          <h1 className="text-2xl font-bold text-text-primary sm:text-3xl">Documents</h1>
-          <p className="text-text-secondary">{proposal.title}</p>
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex items-center gap-3">
+          <Button variant="outline" size="sm" onClick={() => router.push(`/proposals/${id}`)}>
+            <ArrowLeft size={16} className="mr-1" /> Back to proposal
+          </Button>
+          <div>
+            <h1 className="text-2xl font-bold text-text-primary sm:text-3xl">Documents</h1>
+            <p className="text-text-secondary">{proposal.title}</p>
+          </div>
         </div>
+        <Button
+          onClick={() => router.push(`/proposals/${id}/ai-review`)}
+          disabled={proposal.documents.length === 0}
+          title={proposal.documents.length === 0 ? "Upload a document first" : "Run the AI Enabled deep review"}
+        >
+          <Sparkles size={16} className="mr-1" /> AI Enabled Review
+        </Button>
       </div>
 
       <Card className="border-primary-200 bg-primary-50 dark:border-primary-500/30 dark:bg-primary-500/10">

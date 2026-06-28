@@ -1,7 +1,7 @@
 import { type ReviewCycleType, type WorkflowStage } from "./types";
 
 export const stageLabels: Record<WorkflowStage, string> = {
-  intake: "Proposal Created",
+  intake: "Proposal Creation",
   proposal_review: "Proposal Review",
   proposal_feedback: "Proposal Feedback",
   proposal_rework: "Sent for Changes",
@@ -22,7 +22,7 @@ export const stageLabels: Record<WorkflowStage, string> = {
 };
 
 export const stageShortLabels: Record<WorkflowStage, string> = {
-  intake: "Created",
+  intake: "Creation",
   proposal_review: "Review",
   proposal_feedback: "Feedback",
   proposal_rework: "Rework",

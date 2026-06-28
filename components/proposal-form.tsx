@@ -123,7 +123,7 @@ export function ProposalForm() {
         gtmOwner: form.gtmOwner || undefined,
         proposalReviewer: form.proposalReviewer || undefined,
         proposalRegion: form.proposalRegion || undefined,
-        status: "submitted",
+        status: "draft",
         summary: "",
         documents: allDocuments,
       });
@@ -490,7 +490,7 @@ export function ProposalForm() {
               </Button>
               <Button onClick={handleSubmit} disabled={submitting}>
                 {submitting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
-                Proposal Review
+                Create Proposal
               </Button>
             </CardFooter>
           </>

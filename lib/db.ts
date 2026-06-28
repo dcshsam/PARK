@@ -138,11 +138,31 @@ export async function getProposal(id: string): Promise<Proposal | undefined> {
 
   // Backfill workflow data for proposals created before the workflow feature.
   const existingCycles = await db.workflowCycles.where("proposalId").equals(id).count();
-  if (existingCycles === 0) {
+  const existingEvents = await db.workflowEvents.where("proposalId").equals(id).count();
+  if (existingCycles === 0 && existingEvents === 0) {
     const now = new Date();
     const stage = deriveInitialWorkflowStage(record.status);
+
+    // The creation phase ("intake") has no review cycle — record only a marker
+    // event so the proposal sits in creation until it is submitted for review.
+    if (stage === "intake") {
+      await db.workflowEvents.add({
+        id: crypto.randomUUID(),
+        proposalId: id,
+        cycleId: id,
+        type: "cycle_started",
+        toStage: "intake",
+        actor: "System",
+        note: "Proposal creation started",
+        createdAt: record.createdAt ? new Date(record.createdAt) : now,
+      });
+      await db.proposals.update(id, { workflowStage: "intake" });
+      const refreshedIntake = await db.proposals.get(id);
+      return refreshedIntake ? hydrateProposal(refreshedIntake) : undefined;
+    }
+
     const cycleType =
-      stage === "approved" || stage === "rejected" || stage === "intake"
+      stage === "approved" || stage === "rejected"
         ? "proposal"
         : deriveCycleType(stage);
     const cycle: WorkflowCycle = {
@@ -206,9 +226,12 @@ export async function addProposal(
   const db = getDb();
   const now = new Date();
 
+  // New proposals start in the creation phase ("intake"). No review cycle is
+  // created until the proposal is explicitly submitted for review.
   const record: ProposalRecord = {
     ...input,
-    workflowStage: input.workflowStage ?? "proposal_review",
+    workflowStage: input.workflowStage ?? "intake",
+    status: "draft",
     id: crypto.randomUUID(),
     createdAt: now,
     updatedAt: now,
@@ -216,42 +239,30 @@ export async function addProposal(
 
   await db.proposals.add(record);
 
-  const cycle: WorkflowCycle = {
-    id: crypto.randomUUID(),
-    proposalId: record.id,
-    cycleType: "proposal",
-    iteration: 1,
-    stage: "proposal_review",
-    startedAt: now,
-    status: "active",
-  };
-  await db.workflowCycles.add(cycle);
-
+  // Documents uploaded during creation aren't tied to a review cycle yet.
   const documents: UploadedFile[] = input.documents.map((doc) => ({
     ...doc,
     id: crypto.randomUUID(),
     proposalId: record.id,
-    cycleId: cycle.id,
     version: 1,
     uploadedAt: now,
   }));
 
   if (documents.length) await db.documents.bulkAdd(documents);
 
+  // Creation-phase marker event. The proposal initiation date is the creation
+  // timestamp and serves as the creation phase start.
   const event: WorkflowEvent = {
     id: crypto.randomUUID(),
     proposalId: record.id,
-    cycleId: cycle.id,
+    cycleId: record.id,
     type: "cycle_started",
-    toStage: "proposal_review",
+    toStage: "intake",
     actor: "System",
-    note: "Proposal created and submitted for review",
+    note: "Proposal creation started",
     createdAt: now,
   };
   await db.workflowEvents.add(event);
-
-  await db.proposals.update(record.id, { currentCycleId: cycle.id });
-  record.currentCycleId = cycle.id;
 
   return hydrateProposal(record);
 }

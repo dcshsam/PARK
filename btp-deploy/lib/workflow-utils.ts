@@ -82,8 +82,27 @@ export function getCycleSummary(cycle: WorkflowCycle, events: WorkflowEvent[]): 
   return {
     cycle,
     durationMs,
-    iterations: Math.max(1, reworkCount + 1),
+    // cycle.iteration is the authoritative count (bumped on rework and on
+    // new-version cycles); fall back to counting rework events.
+    iterations: Math.max(cycle.iteration ?? 1, reworkCount + 1),
   };
+}
+
+/**
+ * Duration of the "Proposal creation" phase: from the proposal initiation date
+ * (createdAt) to the moment it was submitted for review. If it hasn't been
+ * submitted yet, measures elapsed time up to now.
+ */
+export function getCreationDuration(proposal: Proposal): number {
+  const start = proposal.createdAt.getTime();
+  const end = proposal.submittedForReviewAt
+    ? proposal.submittedForReviewAt.getTime()
+    : proposal.workflowStage === "intake"
+      ? Date.now()
+      : // Submitted before this field existed — fall back to the first review event.
+        proposal.workflowEvents.find((e) => e.toStage === "proposal_review")?.createdAt.getTime() ??
+        Date.now();
+  return Math.max(0, end - start);
 }
 
 export function getTotalProposalDuration(proposal: Proposal): number {

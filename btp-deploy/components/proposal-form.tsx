@@ -123,9 +123,8 @@ export function ProposalForm() {
         gtmOwner: form.gtmOwner || undefined,
         proposalReviewer: form.proposalReviewer || undefined,
         proposalRegion: form.proposalRegion || undefined,
-        status: "submitted",
+        status: "draft",
         summary: "",
-        score: {},
         documents: allDocuments,
       });
       router.push(`/proposals/${proposal.id}`);
@@ -387,7 +386,7 @@ export function ProposalForm() {
             <CardHeader>
               <CardTitle>Upload customer final proposal</CardTitle>
               <CardDescription>
-                Upload the customer&apos;s final proposal document. The AI will evaluate this document against every rule in the selected ruleset, using the supporting documents from the previous step for context.
+                Upload the customer&apos;s final proposal document. The AI Enabled Review will evaluate this document across the deep-review sections and built-in rules, using the supporting documents from the previous step for context.
                 Multiple files and formats (TXT, MD, PDF, DOCX, images) are supported.
               </CardDescription>
             </CardHeader>
@@ -491,7 +490,7 @@ export function ProposalForm() {
               </Button>
               <Button onClick={handleSubmit} disabled={submitting}>
                 {submitting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
-                Proposal Review
+                Create Proposal
               </Button>
             </CardFooter>
           </>

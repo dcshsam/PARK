@@ -3,8 +3,9 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { getProposals, deleteProposal } from "@/lib/db";
+import { getProposals, deleteProposal, getDeepReviewMap } from "@/lib/db";
 import type { Proposal, ProposalStatus } from "@/lib/types";
+import type { DeepReview } from "@/lib/deep-review/types";
 import { statusLabels } from "@/lib/types";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -14,14 +15,17 @@ import { Card, CardContent } from "@/components/ui/card";
 import { formatDate, cn } from "@/lib/utils";
 import { Search, Plus, Trash2, LayoutGrid, List } from "lucide-react";
 import { ProposalActionModal } from "@/components/proposal-action-modal";
+import { useProfile } from "@/components/profile-provider";
 
 const statusOptions: ProposalStatus[] = ["draft", "submitted", "under_review", "approved", "rejected"];
 
 export function ProposalsPageInner() {
   const searchParams = useSearchParams();
   const initialSearch = searchParams.get("search") || "";
+  const { can } = useProfile();
 
   const [proposals, setProposals] = useState<Proposal[]>([]);
+  const [reviews, setReviews] = useState<Map<string, DeepReview>>(new Map());
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState(initialSearch);
   const [statusFilter, setStatusFilter] = useState<ProposalStatus | "all">("all");
@@ -34,6 +38,7 @@ export function ProposalsPageInner() {
       setProposals(data);
       setLoading(false);
     });
+    getDeepReviewMap().then(setReviews);
   };
 
   useEffect(() => {
@@ -43,6 +48,9 @@ export function ProposalsPageInner() {
         setProposals(data);
         setLoading(false);
       }
+    });
+    getDeepReviewMap().then((m) => {
+      if (!cancelled) setReviews(m);
     });
     return () => {
       cancelled = true;
@@ -80,11 +88,13 @@ export function ProposalsPageInner() {
           <h1 className="text-2xl font-bold text-text-primary sm:text-3xl">Proposals</h1>
           <p className="text-text-secondary">Search, filter, and manage all proposal reviews.</p>
         </div>
-        <Link href="/proposals/new">
-          <Button>
-            <Plus size={18} className="mr-2" /> New Review
-          </Button>
-        </Link>
+        {can("create_proposal") && (
+          <Link href="/proposals/new">
+            <Button>
+              <Plus size={18} className="mr-2" /> New Review
+            </Button>
+          </Link>
+        )}
       </div>
 
       <div className="flex flex-col gap-3 sm:flex-row">
@@ -148,13 +158,15 @@ export function ProposalsPageInner() {
               <CardContent className="flex flex-1 flex-col p-5">
                 <div className="mb-3 flex items-start justify-between">
                   <Badge variant={proposal.status}>{statusLabels[proposal.status]}</Badge>
-                  <button
-                    onClick={() => handleDelete(proposal.id)}
-                    className="text-text-muted transition-colors hover:text-red-600"
-                    aria-label="Delete"
-                  >
-                    <Trash2 size={16} />
-                  </button>
+                  {can("delete_proposal") && (
+                    <button
+                      onClick={() => handleDelete(proposal.id)}
+                      className="text-text-muted transition-colors hover:text-red-600"
+                      aria-label="Delete"
+                    >
+                      <Trash2 size={16} />
+                    </button>
+                  )}
                 </div>
                 <button
                   onClick={() => openActionModal(proposal)}
@@ -182,12 +194,12 @@ export function ProposalsPageInner() {
                 <div className="mt-4 flex items-center justify-between border-t border-border-subtle pt-3 text-xs text-text-tertiary">
                   <span>{proposal.documents.length} document(s)</span>
                   <div className="flex items-center gap-2">
-                    {proposal.aiReview && (
+                    {reviews.get(proposal.id) && (
                       <span className={cn(
                         "rounded-md px-1.5 py-0.5 font-semibold",
-                        proposal.aiReview.overallScore >= 6 ? "bg-green-100 text-green-700" : "bg-red-100 text-red-700"
+                        reviews.get(proposal.id)!.overall_score >= 60 ? "bg-green-100 text-green-700" : "bg-red-100 text-red-700"
                       )}>
-                        {proposal.aiReview.overallScore}/10
+                        {reviews.get(proposal.id)!.overall_score}/100
                       </span>
                     )}
                     <span>{proposal.dueDate ? formatDate(proposal.dueDate) : "No due date"}</span>
@@ -231,25 +243,27 @@ export function ProposalsPageInner() {
                   )}
                 </div>
                 <div className="flex items-center gap-4">
-                  {proposal.aiReview && (
+                  {reviews.get(proposal.id) && (
                     <span className={cn(
                       "rounded-md px-2 py-0.5 text-xs font-semibold",
-                      proposal.aiReview.overallScore >= 6 ? "bg-green-100 text-green-700" : "bg-red-100 text-red-700"
+                      reviews.get(proposal.id)!.overall_score >= 60 ? "bg-green-100 text-green-700" : "bg-red-100 text-red-700"
                     )}>
-                      {proposal.aiReview.overallScore}/10
+                      {reviews.get(proposal.id)!.overall_score}/100
                     </span>
                   )}
                   <span className="text-xs text-text-tertiary">
                     {proposal.dueDate ? formatDate(proposal.dueDate) : "No due date"}
                   </span>
                   <Badge variant={proposal.status}>{statusLabels[proposal.status]}</Badge>
-                  <button
-                    onClick={() => handleDelete(proposal.id)}
-                    className="text-text-muted transition-colors hover:text-red-600"
-                    aria-label="Delete"
-                  >
-                    <Trash2 size={16} />
-                  </button>
+                  {can("delete_proposal") && (
+                    <button
+                      onClick={() => handleDelete(proposal.id)}
+                      className="text-text-muted transition-colors hover:text-red-600"
+                      aria-label="Delete"
+                    >
+                      <Trash2 size={16} />
+                    </button>
+                  )}
                 </div>
               </div>
             ))}

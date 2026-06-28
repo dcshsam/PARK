@@ -19,6 +19,7 @@ import {
 } from "@/lib/workflow-config";
 import {
   formatDurationShort,
+  getCreationDuration,
   getCycleSummary,
   getStageDurations,
   getTotalProposalDuration,
@@ -40,8 +41,12 @@ import {
   ThumbsUp,
   Send,
   RefreshCw,
+  FilePlus2,
+  Search,
+  PencilLine,
 } from "lucide-react";
-import { cn } from "@/lib/utils";
+import { cn, formatDate } from "@/lib/utils";
+import { differenceInBusinessDays } from "date-fns";
 
 interface WorkflowRoadmapProps {
   proposal: Proposal;
@@ -79,17 +84,22 @@ interface CycleProgress {
 function getCycleProgress(
   cycleType: ReviewCycleType,
   currentStage: WorkflowStage | undefined,
-  events: WorkflowEvent[],
   cycle: WorkflowCycle | undefined
 ): CycleProgress {
-  const reached = (s: WorkflowStage) => events.some((e) => e.toStage === s);
-  const reviewS = `${cycleType}_review` as WorkflowStage;
+  // Scope progress to the selected cycle only. A proposal can have several
+  // cycles of the same type (e.g. after an uploaded new version), so reading
+  // global events would let an older completed cycle mask the active one.
   const finalS = `${cycleType}_final_review` as WorkflowStage;
-  const completedS = `${cycleType}_completed` as WorkflowStage;
+  const feedbackS = `${cycleType}_feedback` as WorkflowStage;
+  const reworkS = `${cycleType}_rework` as WorkflowStage;
 
-  const isCompleted = Boolean(cycle?.completedAt) || reached(completedS);
-  const isCurrent = Boolean(currentStage) && getCycleType(currentStage as WorkflowStage) === cycleType;
-  const started = isCompleted || isCurrent || reached(reviewS);
+  const isCompleted = Boolean(cycle?.completedAt);
+  const isCurrent =
+    Boolean(cycle) &&
+    !isCompleted &&
+    Boolean(currentStage) &&
+    getCycleType(currentStage as WorkflowStage) === cycleType;
+  const started = Boolean(cycle);
 
   const statusFor = (key: MilestoneKey): MilestoneStatus => {
     if (isCompleted) return "completed";
@@ -104,8 +114,8 @@ function getCycleProgress(
     isCompleted,
     isCurrent,
     milestones: MILESTONES.map((m) => ({ ...m, status: statusFor(m.key) })),
-    inFeedback: isCurrent && currentStage === (`${cycleType}_feedback` as WorkflowStage),
-    inRework: isCurrent && currentStage === (`${cycleType}_rework` as WorkflowStage),
+    inFeedback: isCurrent && currentStage === feedbackS,
+    inRework: isCurrent && currentStage === reworkS,
     iteration: cycle?.iteration ?? 1,
   };
 }
@@ -141,6 +151,33 @@ function getStageTheme(stage: WorkflowStage, cycleType: ReviewCycleType | null) 
   return cycleType ? cycleTheme[cycleType] : cycleTheme.proposal;
 }
 
+// Date each milestone (Review → Final Review → Completed) was reached within a cycle.
+function getMilestoneDates(
+  cycleType: ReviewCycleType,
+  cycle: WorkflowCycle | undefined,
+  events: WorkflowEvent[]
+): { review?: Date; final?: Date; completed?: Date } {
+  if (!cycle) return {};
+  const finalS = `${cycleType}_final_review` as WorkflowStage;
+  const completedS = `${cycleType}_completed` as WorkflowStage;
+  const inCycle = (toStage: WorkflowStage) =>
+    events.find((e) => e.cycleId === cycle.id && e.toStage === toStage)?.createdAt;
+  return {
+    review: cycle.startedAt,
+    final: inCycle(finalS),
+    completed: cycle.completedAt ?? inCycle(completedS),
+  };
+}
+
+// Working (business) days between two milestones. If the end isn't reached yet,
+// counts up to now and flags it as ongoing.
+function workingDaysLabel(start?: Date, end?: Date): string | null {
+  if (!start) return null;
+  const ongoing = !end;
+  const days = Math.max(0, differenceInBusinessDays(end ?? new Date(), start));
+  return `${days} working day${days === 1 ? "" : "s"}${ongoing ? " so far" : ""}`;
+}
+
 export function WorkflowRoadmap({ proposal, onChange }: WorkflowRoadmapProps) {
   const { can } = useProfile();
   const [loading, setLoading] = useState<WorkflowAction["type"] | null>(null);
@@ -151,12 +188,57 @@ export function WorkflowRoadmap({ proposal, onChange }: WorkflowRoadmapProps) {
   const currentTheme = getStageTheme(currentStage ?? "intake", currentCycleType);
   const events = proposal.workflowEvents;
   const cycles = proposal.workflowCycles;
-  const availableActions = getAvailableActions(currentStage);
+  const availableActions = getAvailableActions(proposal);
   const isFinalized = currentStage === "approved" || currentStage === "rejected";
 
   const stageDurations = useMemo(() => getStageDurations(events), [events]);
   const currentStageDuration = stageDurations[stageDurations.length - 1]?.durationMs ?? 0;
   const totalDuration = useMemo(() => getTotalProposalDuration(proposal), [proposal]);
+  const creationDuration = useMemo(() => getCreationDuration(proposal), [proposal]);
+  const inCreation = currentStage === "intake";
+  const creationDone = Boolean(currentStage) && currentStage !== "intake";
+  const ddAt = proposal.dueDiligenceStartedAt;
+  const pcAt = proposal.proposalCreationStartedAt;
+  // The checkpoint currently awaiting action while still in the creation phase.
+  const ddActive = inCreation && !ddAt;
+  const pcActive = inCreation && Boolean(ddAt) && !pcAt;
+  // Working days on each creation connector segment.
+  const segInitToDd = ddAt
+    ? workingDaysLabel(proposal.createdAt, ddAt)
+    : ddActive
+      ? workingDaysLabel(proposal.createdAt, undefined)
+      : null;
+  const segDdToPc = pcAt
+    ? workingDaysLabel(ddAt, pcAt)
+    : pcActive
+      ? workingDaysLabel(ddAt, undefined)
+      : null;
+  const creationSteps = [
+    {
+      key: "initiated",
+      label: "Initiated",
+      Icon: FilePlus2,
+      status: "completed" as MilestoneStatus,
+      date: proposal.createdAt as Date | undefined,
+      placeholder: "—",
+    },
+    {
+      key: "dd",
+      label: "Start of Due Diligence",
+      Icon: Search,
+      status: (ddAt ? "completed" : ddActive ? "active" : "pending") as MilestoneStatus,
+      date: ddAt,
+      placeholder: ddActive ? "Awaiting" : "—",
+    },
+    {
+      key: "pc",
+      label: "Start of Proposal Creation",
+      Icon: PencilLine,
+      status: (pcAt ? "completed" : pcActive ? "active" : "pending") as MilestoneStatus,
+      date: pcAt,
+      placeholder: pcActive ? "Awaiting" : "—",
+    },
+  ];
 
   const handleAction = async (actionType: WorkflowAction["type"]) => {
     setLoading(actionType);
@@ -217,7 +299,10 @@ export function WorkflowRoadmap({ proposal, onChange }: WorkflowRoadmapProps) {
                   onClick={() => handleAction(action)}
                   disabled={loading !== null}
                   variant={
-                    action === "approve"
+                    action === "approve" ||
+                    action === "submit_for_review" ||
+                    action === "start_due_diligence" ||
+                    action === "start_proposal_creation"
                       ? "primary"
                       : action === "reject" || action === "reject_to_sparc"
                         ? "danger"
@@ -233,7 +318,11 @@ export function WorkflowRoadmap({ proposal, onChange }: WorkflowRoadmapProps) {
                     <XCircle size={16} className="mr-2" />
                   ) : action === "add_feedback" ? (
                     <MessageSquare size={16} className="mr-2" />
-                  ) : action === "submit_changes" ? (
+                  ) : action === "start_due_diligence" ? (
+                    <Search size={16} className="mr-2" />
+                  ) : action === "start_proposal_creation" ? (
+                    <PencilLine size={16} className="mr-2" />
+                  ) : action === "submit_for_review" || action === "submit_changes" ? (
                     <Send size={16} className="mr-2" />
                   ) : (
                     <RotateCcw size={16} className="mr-2" />
@@ -266,15 +355,108 @@ export function WorkflowRoadmap({ proposal, onChange }: WorkflowRoadmapProps) {
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-8">
+          {/* Proposal Creation phase */}
+          <div className="relative">
+            <div className="mb-5 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+              <div className="flex items-center gap-3">
+                <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-surface-muted">
+                  <FilePlus2
+                    size={20}
+                    className={inCreation || creationDone ? "text-text-secondary" : "text-text-muted"}
+                  />
+                </div>
+                <div>
+                  <h3 className="text-base font-semibold text-text-secondary">Proposal Creation</h3>
+                  <p className="text-xs text-text-tertiary">
+                    {creationDone ? "Completed" : inCreation ? "In progress" : "Not started"}
+                  </p>
+                </div>
+              </div>
+              <div className="flex items-center gap-1 text-xs font-medium text-text-tertiary">
+                <Clock size={14} />
+                {formatDurationShort(creationDuration)}
+              </div>
+            </div>
+
+            {/* Creation milestone stepper — same round-node style as the cycles */}
+            <div className="relative px-2">
+              {/* Connector line, inset to align with first/last node centers */}
+              <div className="absolute top-6 h-0.5 bg-border" style={{ left: "16.666%", right: "16.666%" }} />
+
+              {/* Working days between the creation checkpoints */}
+              {segInitToDd && (
+                <span
+                  className="absolute top-6 z-20 -translate-x-1/2 -translate-y-1/2 whitespace-nowrap rounded-full border border-border bg-surface px-2 py-0.5 text-[10px] font-medium text-text-tertiary"
+                  style={{ left: "33.333%" }}
+                >
+                  {segInitToDd}
+                </span>
+              )}
+              {segDdToPc && (
+                <span
+                  className="absolute top-6 z-20 -translate-x-1/2 -translate-y-1/2 whitespace-nowrap rounded-full border border-border bg-surface px-2 py-0.5 text-[10px] font-medium text-text-tertiary"
+                  style={{ left: "66.666%" }}
+                >
+                  {segDdToPc}
+                </span>
+              )}
+
+              <div className="grid grid-cols-3 gap-4">
+                {creationSteps.map((s) => {
+                  const Icon = s.Icon;
+                  return (
+                    <div key={s.key} className="relative flex flex-col items-center text-center">
+                      <div
+                        className={cn(
+                          "relative z-10 flex h-12 w-12 items-center justify-center rounded-full border-2 transition-all",
+                          s.status === "completed"
+                            ? "border-transparent bg-text-secondary text-white"
+                            : s.status === "active"
+                              ? "border-border bg-surface text-text-secondary ring-4 ring-surface-muted"
+                              : "border-border bg-surface text-text-muted"
+                        )}
+                      >
+                        <Icon size={20} />
+                      </div>
+                      <p
+                        className={cn(
+                          "mt-3 text-xs font-semibold",
+                          s.status === "pending" ? "text-text-muted" : "text-text-primary"
+                        )}
+                      >
+                        {s.label}
+                      </p>
+                      {s.status === "completed" && (
+                        <p className="text-[11px] font-medium text-text-tertiary">Done</p>
+                      )}
+                      {s.status === "active" && (
+                        <p className="text-[11px] font-medium text-text-secondary">Awaiting</p>
+                      )}
+                      <p className="mt-0.5 text-[10px] text-text-tertiary">
+                        {s.date ? formatDate(s.date) : s.placeholder}
+                      </p>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+
           {CYCLE_ORDER.map((cycleType) => {
             const theme = cycleTheme[cycleType];
             const cycle = cycles
               .filter((c) => c.cycleType === cycleType)
               .sort((a, b) => b.iteration - a.iteration)[0];
             const summary = cycle ? getCycleSummary(cycle, events) : null;
-            const prog = getCycleProgress(cycleType, currentStage, events, cycle);
+            const prog = getCycleProgress(cycleType, currentStage, cycle);
             const CycleIcon = CYCLE_ICON[cycleType];
             const inset = `${50 / MILESTONES.length}%`;
+            const mDates = getMilestoneDates(cycleType, cycle, events);
+            // Working days spent on each connector segment (Review→Final, Final→Completed).
+            const segReviewToFinal = prog.isCurrent || prog.isCompleted
+              ? workingDaysLabel(mDates.review, mDates.final)
+              : null;
+            const segFinalToCompleted = workingDaysLabel(mDates.final, mDates.completed);
 
             return (
               <div key={cycleType} className="relative">
@@ -312,9 +494,33 @@ export function WorkflowRoadmap({ proposal, onChange }: WorkflowRoadmapProps) {
                   {/* Connector line, inset to align with first/last node centers */}
                   <div className="absolute top-6 h-0.5 bg-border" style={{ left: inset, right: inset }} />
 
+                  {/* Working-day counts on each connector segment */}
+                  {segReviewToFinal && (
+                    <span
+                      className="absolute top-6 z-20 -translate-x-1/2 -translate-y-1/2 whitespace-nowrap rounded-full border border-border bg-surface px-2 py-0.5 text-[10px] font-medium text-text-tertiary"
+                      style={{ left: "33.333%" }}
+                    >
+                      {segReviewToFinal}
+                    </span>
+                  )}
+                  {segFinalToCompleted && (
+                    <span
+                      className="absolute top-6 z-20 -translate-x-1/2 -translate-y-1/2 whitespace-nowrap rounded-full border border-border bg-surface px-2 py-0.5 text-[10px] font-medium text-text-tertiary"
+                      style={{ left: "66.666%" }}
+                    >
+                      {segFinalToCompleted}
+                    </span>
+                  )}
+
                   <div className="grid grid-cols-3 gap-4">
                     {prog.milestones.map((m) => {
                       const Icon = m.icon;
+                      const reachedAt =
+                        m.key === "review"
+                          ? mDates.review
+                          : m.key === "final"
+                            ? mDates.final
+                            : mDates.completed;
                       return (
                         <div key={m.key} className="relative flex flex-col items-center text-center">
                           <div
@@ -342,6 +548,9 @@ export function WorkflowRoadmap({ proposal, onChange }: WorkflowRoadmapProps) {
                           )}
                           {m.status === "completed" && (
                             <p className="text-[11px] font-medium text-text-tertiary">Done</p>
+                          )}
+                          {reachedAt && (
+                            <p className="mt-0.5 text-[10px] text-text-tertiary">{formatDate(reachedAt)}</p>
                           )}
                         </div>
                       );
@@ -449,15 +658,19 @@ export function WorkflowRoadmap({ proposal, onChange }: WorkflowRoadmapProps) {
                       <p className="text-sm text-text-primary">
                         <span className="font-medium">{event.actor}</span>{" "}
                         {event.type === "cycle_started" && "started"}
+                        {event.type === "due_diligence_started" && "started due diligence"}
+                        {event.type === "proposal_creation_started" && "started proposal creation"}
                         {event.type === "cycle_completed" && "completed"}
                         {event.type === "stage_changed" && "moved to"}
                         {event.type === "feedback_added" && "added feedback on"}
                         {event.type === "changes_submitted" && "submitted changes for"}
                         {event.type === "rejected" && "rejected proposal"}
                         {event.type === "document_uploaded" && "uploaded document version"}
-                        {event.toStage && (
-                          <span className="font-medium text-text-primary"> {stageLabels[event.toStage]}</span>
-                        )}
+                        {event.toStage &&
+                          event.type !== "due_diligence_started" &&
+                          event.type !== "proposal_creation_started" && (
+                            <span className="font-medium text-text-primary"> {stageLabels[event.toStage]}</span>
+                          )}
                       </p>
                       {event.note && <p className="text-xs text-text-tertiary">{event.note}</p>}
                       <p className="text-xs text-text-muted">{event.createdAt.toLocaleString()}</p>

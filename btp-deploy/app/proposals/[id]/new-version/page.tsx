@@ -6,11 +6,13 @@ import {
   getProposal,
   addDocument,
   addWorkflowEvent,
-  saveAiReview,
-  getRuleset,
+  saveDeepReview,
+  getActiveDeepRules,
 } from "@/lib/db";
 import { startNewVersionCycle } from "@/lib/workflow-engine";
-import { extractDocumentText, runAiReview } from "@/lib/ai-review-service";
+import { extractFinalProposalAndContext, extractAllDocumentText } from "@/lib/deep-review/extract";
+import { runDeepReview } from "@/lib/deep-review/engine";
+import { getDefaultStrictness } from "@/lib/deep-review/settings";
 import type { Proposal, UploadedFile, DocumentCategory } from "@/lib/types";
 import { categoryLabels, statusLabels } from "@/lib/types";
 import { Button } from "@/components/ui/button";
@@ -91,16 +93,30 @@ export default function NewVersionPage() {
       if (!refreshed) throw new Error("Failed to refresh proposal after upload");
       setProposal(refreshed);
 
-      const ruleset = refreshed.rulesetId ? await getRuleset(refreshed.rulesetId) : null;
-      if (ruleset) {
+      if (refreshed.documents.length > 0) {
         setStep("reviewing");
-        setProgressText("Running AI review on the new version...");
-        const documentText = await extractDocumentText(refreshed);
-        const result = await runAiReview({ proposal: refreshed, ruleset, documentText });
-        await saveAiReview(result);
-        setProgressText("AI review complete.");
+        setProgressText("Running AI Enabled Review on the new version...");
+        const { finalProposalText, contextText } = extractFinalProposalAndContext(refreshed);
+        const proposalText = finalProposalText.trim() || extractAllDocumentText(refreshed).trim();
+        if (proposalText) {
+          const finalDoc = refreshed.documents.find((d) => d.category === "final_proposal");
+          const rules = await getActiveDeepRules();
+          const result = await runDeepReview({
+            proposalId: refreshed.id,
+            fileName: finalDoc?.name || `${refreshed.title}.txt`,
+            proposalText,
+            contextText,
+            strictness: getDefaultStrictness(),
+            rules,
+            onProgress: ({ stage }) => setProgressText(stage),
+          });
+          await saveDeepReview(result);
+          setProgressText("AI Enabled Review complete.");
+        } else {
+          setProgressText("No readable document text; skipping AI review.");
+        }
       } else {
-        setProgressText("No ruleset configured; skipping AI review.");
+        setProgressText("No documents uploaded; skipping AI review.");
       }
 
       setStep("done");
@@ -133,15 +149,15 @@ export default function NewVersionPage() {
         </div>
         <h2 className="text-xl font-semibold text-text-primary">New Version Cycle Complete</h2>
         <p className="mt-2 max-w-md text-sm text-text-secondary">
-          The new documents have been uploaded, a fresh review cycle has started, and the AI review
-          has been updated.
+          The new documents have been uploaded, a fresh review cycle has started, and the AI Enabled
+          Review has been updated.
         </p>
         <div className="mt-6 flex gap-3">
           <Button variant="outline" onClick={() => router.push(`/proposals/${id}`)}>
             View Proposal
           </Button>
-          <Button onClick={() => router.push(`/proposals/${id}/review`)}>
-            Open Review Workspace
+          <Button onClick={() => router.push(`/proposals/${id}/ai-review`)}>
+            Open AI Enabled Review
           </Button>
         </div>
       </div>

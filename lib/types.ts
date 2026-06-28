@@ -53,7 +53,9 @@ export interface WorkflowEvent {
     | "changes_submitted"
     | "cycle_completed"
     | "rejected"
-    | "document_uploaded";
+    | "document_uploaded"
+    | "due_diligence_started"
+    | "proposal_creation_started";
   fromStage?: WorkflowStage;
   toStage?: WorkflowStage;
   actor: string;
@@ -99,6 +101,11 @@ export interface Proposal {
   proposalRegion?: string;
   workflowStage?: WorkflowStage;
   currentCycleId?: string;
+  /** Creation-phase checkpoints (all occur while in the "intake" stage). */
+  dueDiligenceStartedAt?: Date;
+  proposalCreationStartedAt?: Date;
+  /** Timestamp the proposal was submitted from the creation phase into proposal review. */
+  submittedForReviewAt?: Date;
   createdAt: Date;
   updatedAt: Date;
   documents: UploadedFile[];
