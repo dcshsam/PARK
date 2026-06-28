@@ -1,0 +1,9 @@
+node_modules
+.git
+.kimi
+.next/cache
+.next/dev
+*.tsbuildinfo
+.env.local
+.env
+btp-deploy
