@@ -141,7 +141,6 @@ export function seedDemoData(): Proposal[] {
         ),
       ],
       summary: "Strong enterprise fit. Need clarification on data residency requirements.",
-      score: { compliance: 4, clarity: 5, feasibility: 4, value: 3, overall: 4 },
       comments: [
         comment(p1Id, "Reviewer A", "Compliance section is thorough but missing GDPR specifics."),
         comment(p1Id, "Reviewer B", "Pricing is competitive; validate implementation timeline."),
@@ -177,7 +176,6 @@ export function seedDemoData(): Proposal[] {
         ),
       ],
       summary: "Awaiting preliminary review.",
-      score: {},
       comments: [],
       workflowCycles: [],
       workflowEvents: [],
@@ -197,7 +195,6 @@ export function seedDemoData(): Proposal[] {
         doc(p3Id, "customer_doc", "Stark_Compliance_Requirements.docx", "SOC 2 Type II, ISO 27001, and NIST alignment requirements."),
       ],
       summary: "Approved by security committee. Proceed to contract negotiation.",
-      score: { compliance: 5, clarity: 5, feasibility: 5, value: 4, overall: 5 },
       comments: [comment(p3Id, "CISO", "Meets all critical security criteria. Approved.")],
       workflowCycles: [p3Cycle1, p3Cycle2, p3Cycle3],
       workflowEvents: [
@@ -245,7 +242,6 @@ export function seedDemoData(): Proposal[] {
       updatedAt: new Date(now.getTime() - 1000 * 60 * 60 * 6),
       documents: [],
       summary: "",
-      score: {},
       comments: [],
       workflowCycles: [],
       workflowEvents: [],

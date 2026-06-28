@@ -125,7 +125,6 @@ export function ProposalForm() {
         proposalRegion: form.proposalRegion || undefined,
         status: "submitted",
         summary: "",
-        score: {},
         documents: allDocuments,
       });
       router.push(`/proposals/${proposal.id}`);
@@ -387,7 +386,7 @@ export function ProposalForm() {
             <CardHeader>
               <CardTitle>Upload customer final proposal</CardTitle>
               <CardDescription>
-                Upload the customer&apos;s final proposal document. The AI will evaluate this document against every rule in the selected ruleset, using the supporting documents from the previous step for context.
+                Upload the customer&apos;s final proposal document. The AI Enabled Review will evaluate this document across the deep-review sections and built-in rules, using the supporting documents from the previous step for context.
                 Multiple files and formats (TXT, MD, PDF, DOCX, images) are supported.
               </CardDescription>
             </CardHeader>

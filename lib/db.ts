@@ -7,15 +7,15 @@ import type {
   Comment,
   WorkflowCycle,
   WorkflowEvent,
-  Ruleset,
-  AiReviewResult,
 } from "./types";
 import { seedDemoData } from "./demo-data";
-import { getDefaultSapRuleset } from "./default-ruleset";
+import type { DeepReview } from "./deep-review/types";
+import { BUILTIN_RULE_DEFAULTS, type DeepRule } from "./deep-review/builtin-rules";
+import type { Profile } from "./profiles/types";
 
 type ProposalRecord = Omit<
   Proposal,
-  "documents" | "comments" | "workflowCycles" | "workflowEvents" | "aiReview"
+  "documents" | "comments" | "workflowCycles" | "workflowEvents"
 >;
 
 class ProposalDatabase extends Dexie {
@@ -24,8 +24,9 @@ class ProposalDatabase extends Dexie {
   comments!: EntityTable<Comment, "id">;
   workflowCycles!: EntityTable<WorkflowCycle, "id">;
   workflowEvents!: EntityTable<WorkflowEvent, "id">;
-  rulesets!: EntityTable<Ruleset, "id">;
-  aiReviews!: EntityTable<AiReviewResult, "id">;
+  deepReviews!: EntityTable<DeepReview, "id">;
+  deepRules!: EntityTable<DeepRule, "id">;
+  profiles!: EntityTable<Profile, "id">;
 
   constructor() {
     super("ProposalReviewDB");
@@ -37,6 +38,24 @@ class ProposalDatabase extends Dexie {
       workflowEvents: "++id, proposalId, cycleId, type, createdAt",
       rulesets: "++id, name, isDefault, createdAt, updatedAt",
       aiReviews: "++id, proposalId, rulesetId, generatedAt",
+    });
+    // v5: AI Enabled (deep) reviews — the SPR-style multi-section deep review.
+    this.version(5).stores({
+      deepReviews: "++id, proposalId, analyzed_at",
+    });
+    // v6: the legacy ruleset-based review was removed — drop its stores.
+    this.version(6).stores({
+      rulesets: null,
+      aiReviews: null,
+    });
+    // v7: configurable rules for the AI Enabled Review's rule engine.
+    // Primary key is the caller-provided string id (stable for built-ins).
+    this.version(7).stores({
+      deepRules: "id, is_builtin",
+    });
+    // v8: user profiles / roles (client-side RBAC).
+    this.version(8).stores({
+      profiles: "id, role",
     });
   }
 }
@@ -65,7 +84,6 @@ async function hydrateProposal(record: ProposalRecord): Promise<Proposal> {
     .where("proposalId")
     .equals(record.id)
     .sortBy("createdAt");
-  const aiReview = await db.aiReviews.where("proposalId").equals(record.id).first();
   return {
     ...record,
     documents: documents.map((d) => ({
@@ -86,60 +104,22 @@ async function hydrateProposal(record: ProposalRecord): Promise<Proposal> {
       ...e,
       createdAt: new Date(e.createdAt),
     })),
-    aiReview: aiReview
-      ? {
-          ...aiReview,
-          generatedAt: new Date(aiReview.generatedAt),
-          dynamicReview: aiReview.dynamicReview
-            ? {
-                ...aiReview.dynamicReview,
-                generatedAt: new Date(aiReview.dynamicReview.generatedAt),
-              }
-            : undefined,
-        }
-      : undefined,
   } as Proposal;
-}
-
-async function seedDefaultRuleset(): Promise<Ruleset> {
-  const db = getDb();
-  const all = await db.rulesets.toArray();
-  const existing = all.find((r) => r.isSystem);
-  if (existing) return existing as Ruleset;
-
-  const ruleset = getDefaultSapRuleset();
-  await db.rulesets.add(ruleset);
-  return ruleset;
-}
-
-async function assignDefaultRulesetToProposals(rulesetId: string): Promise<void> {
-  const db = getDb();
-  const proposalsWithoutRuleset = await db.proposals.filter((p) => !p.rulesetId).toArray();
-  for (const proposal of proposalsWithoutRuleset) {
-    await db.proposals.update(proposal.id, { rulesetId });
-  }
 }
 
 export async function seedIfEmpty(): Promise<void> {
   const db = getDb();
   const count = await db.proposals.count();
   if (count === 0) {
-    const ruleset = await seedDefaultRuleset();
     const proposals = seedDemoData();
     for (const proposal of proposals) {
-      const { documents, comments, workflowCycles, workflowEvents, aiReview, ...record } = proposal;
-      const recordWithRuleset = { ...record, rulesetId: ruleset.id } as ProposalRecord;
-      await db.proposals.add(recordWithRuleset);
+      const { documents, comments, workflowCycles, workflowEvents, ...record } = proposal;
+      await db.proposals.add(record as ProposalRecord);
       if (documents?.length) await db.documents.bulkAdd(documents as UploadedFile[]);
       if (comments?.length) await db.comments.bulkAdd(comments as Comment[]);
       if (workflowCycles?.length) await db.workflowCycles.bulkAdd(workflowCycles as WorkflowCycle[]);
       if (workflowEvents?.length) await db.workflowEvents.bulkAdd(workflowEvents as WorkflowEvent[]);
-      if (aiReview) await db.aiReviews.add(aiReview as AiReviewResult);
     }
-  } else {
-    // Ensure default ruleset exists and backfill proposals created before rulesets.
-    const ruleset = await seedDefaultRuleset();
-    await assignDefaultRulesetToProposals(ruleset.id);
   }
 }
 
@@ -218,7 +198,7 @@ function deriveCycleType(stage: import("./types").WorkflowStage): import("./type
 export async function addProposal(
   input: Omit<
     Proposal,
-    "id" | "createdAt" | "updatedAt" | "documents" | "comments" | "workflowCycles" | "workflowEvents" | "aiReview"
+    "id" | "createdAt" | "updatedAt" | "documents" | "comments" | "workflowCycles" | "workflowEvents"
   > & {
     documents: Omit<UploadedFile, "id" | "proposalId" | "uploadedAt">[];
   }
@@ -226,15 +206,8 @@ export async function addProposal(
   const db = getDb();
   const now = new Date();
 
-  let rulesetId = input.rulesetId;
-  if (!rulesetId) {
-    const defaultRuleset = await getDefaultRuleset();
-    rulesetId = defaultRuleset?.id;
-  }
-
   const record: ProposalRecord = {
     ...input,
-    rulesetId,
     workflowStage: input.workflowStage ?? "proposal_review",
     id: crypto.randomUUID(),
     createdAt: now,
@@ -288,7 +261,7 @@ export async function updateProposal(
   changes: Partial<
     Omit<
       Proposal,
-      "id" | "createdAt" | "updatedAt" | "documents" | "comments" | "workflowCycles" | "workflowEvents" | "aiReview"
+      "id" | "createdAt" | "updatedAt" | "documents" | "comments" | "workflowCycles" | "workflowEvents"
     >
   >
 ): Promise<Proposal | undefined> {
@@ -331,9 +304,9 @@ export async function deleteProposal(id: string): Promise<void> {
     db.comments,
     db.workflowCycles,
     db.workflowEvents,
-    db.aiReviews,
+    db.deepReviews,
   ], async () => {
-    await db.aiReviews.where("proposalId").equals(id).delete();
+    await db.deepReviews.where("proposalId").equals(id).delete();
     await db.workflowEvents.where("proposalId").equals(id).delete();
     await db.workflowCycles.where("proposalId").equals(id).delete();
     await db.comments.where("proposalId").equals(id).delete();
@@ -399,116 +372,167 @@ export async function deleteDocument(id: string): Promise<void> {
   }
 }
 
-// Ruleset CRUD
-export async function getRulesets(): Promise<Ruleset[]> {
+// AI Enabled (deep) Review — SPR-style multi-section deep review.
+export async function saveDeepReview(deepReview: DeepReview): Promise<DeepReview> {
   const db = getDb();
-  await seedDefaultRuleset();
-  const records = await db.rulesets.orderBy("updatedAt").reverse().toArray();
-  return records.map((r) => ({
-    ...r,
-    createdAt: new Date(r.createdAt),
-    updatedAt: new Date(r.updatedAt),
-  })) as Ruleset[];
+  // One saved report per proposal — replace any prior one.
+  await db.deepReviews.where("proposalId").equals(deepReview.proposalId).delete();
+  await db.deepReviews.add(deepReview);
+  await db.proposals.update(deepReview.proposalId, { updatedAt: new Date() });
+  return deepReview;
 }
 
-export async function getRuleset(id: string): Promise<Ruleset | undefined> {
+export async function getDeepReview(proposalId: string): Promise<DeepReview | undefined> {
   const db = getDb();
-  const record = await db.rulesets.get(id);
-  if (!record) return undefined;
-  return {
-    ...record,
-    createdAt: new Date(record.createdAt),
-    updatedAt: new Date(record.updatedAt),
-  } as Ruleset;
+  return db.deepReviews.where("proposalId").equals(proposalId).first();
 }
 
-export async function getDefaultRuleset(): Promise<Ruleset | undefined> {
+export async function deleteDeepReview(proposalId: string): Promise<void> {
   const db = getDb();
-  await seedDefaultRuleset();
-  const record = await db.rulesets.where("isDefault").equals(1).first();
-  if (!record) return undefined;
-  return {
-    ...record,
-    createdAt: new Date(record.createdAt),
-    updatedAt: new Date(record.updatedAt),
-  } as Ruleset;
-}
-
-export async function addRuleset(
-  input: Omit<Ruleset, "id" | "createdAt" | "updatedAt">
-): Promise<Ruleset> {
-  const db = getDb();
-  const now = new Date();
-  const record: Ruleset = {
-    ...input,
-    id: crypto.randomUUID(),
-    createdAt: now,
-    updatedAt: now,
-  };
-  await db.rulesets.add(record);
-  return record;
-}
-
-export async function updateRuleset(
-  id: string,
-  changes: Partial<Omit<Ruleset, "id" | "createdAt" | "updatedAt">>
-): Promise<Ruleset | undefined> {
-  const db = getDb();
-  await db.rulesets.update(id, { ...changes, updatedAt: new Date() });
-  return getRuleset(id);
-}
-
-export async function deleteRuleset(id: string): Promise<void> {
-  const db = getDb();
-  const ruleset = await db.rulesets.get(id);
-  if (ruleset?.isSystem) {
-    throw new Error("System rulesets cannot be deleted");
-  }
-  await db.rulesets.delete(id);
-}
-
-export async function setDefaultRuleset(id: string): Promise<void> {
-  const db = getDb();
-  await db.transaction("rw", db.rulesets, async () => {
-    await db.rulesets.toCollection().modify((r) => {
-      r.isDefault = r.id === id;
-    });
-  });
-}
-
-// AI Review
-export async function saveAiReview(
-  aiReview: Omit<AiReviewResult, "id">
-): Promise<AiReviewResult> {
-  const db = getDb();
-  const now = new Date();
-  const existing = await db.aiReviews.where("proposalId").equals(aiReview.proposalId).first();
-
-  if (existing) {
-    await db.aiReviews.update(existing.id, {
-      ...aiReview,
-      generatedAt: now,
-    });
-    const updated = await db.aiReviews.get(existing.id);
-    if (!updated) throw new Error("Failed to save AI review");
-    await db.proposals.update(aiReview.proposalId, { updatedAt: now });
-    return { ...updated, generatedAt: new Date(updated.generatedAt) } as AiReviewResult;
-  }
-
-  const record: AiReviewResult = {
-    ...aiReview,
-    id: crypto.randomUUID(),
-    generatedAt: now,
-  };
-  await db.aiReviews.add(record);
-  await db.proposals.update(aiReview.proposalId, { updatedAt: now });
-  return record;
-}
-
-export async function deleteAiReview(proposalId: string): Promise<void> {
-  const db = getDb();
-  await db.aiReviews.where("proposalId").equals(proposalId).delete();
+  await db.deepReviews.where("proposalId").equals(proposalId).delete();
   await db.proposals.update(proposalId, { updatedAt: new Date() });
+}
+
+// AI Enabled Review — rule engine configuration (built-in + custom rules).
+
+/**
+ * Seed the factory-default built-in rules into the table. Idempotent: only
+ * inserts built-ins whose ids don't already exist, so user edits/deletes are
+ * preserved across reloads (mirrors the SPR `seed_builtin_rules(force=False)`).
+ *
+ * Memoized so React Strict Mode's double-invoked effects (dev) don't run two
+ * concurrent seeds that race on the same ids. `bulkAdd` additionally tolerates
+ * keys inserted by another tab/session by swallowing the ConstraintError.
+ */
+let seedDeepRulesPromise: Promise<void> | null = null;
+
+export function seedBuiltinDeepRules(): Promise<void> {
+  if (!seedDeepRulesPromise) {
+    seedDeepRulesPromise = (async () => {
+      const db = getDb();
+      const existingIds = new Set(
+        (await db.deepRules.toCollection().primaryKeys()) as string[]
+      );
+      const missing = BUILTIN_RULE_DEFAULTS.filter((r) => !existingIds.has(r.id));
+      if (missing.length === 0) return;
+      try {
+        await db.deepRules.bulkAdd(missing.map((r) => ({ ...r })));
+      } catch (err) {
+        // A concurrent seed may have inserted some of these already — that's fine.
+        const name = (err as { name?: string })?.name;
+        if (name !== "BulkError" && name !== "ConstraintError") throw err;
+      }
+    })().catch((err) => {
+      // Don't cache a rejected promise — allow a later retry.
+      seedDeepRulesPromise = null;
+      throw err;
+    });
+  }
+  return seedDeepRulesPromise;
+}
+
+export async function getDeepRules(): Promise<DeepRule[]> {
+  const db = getDb();
+  await seedBuiltinDeepRules();
+  const all = await db.deepRules.toArray();
+  // Built-ins first, then custom rules, each in insertion order.
+  return all.sort((a, b) => Number(b.is_builtin) - Number(a.is_builtin));
+}
+
+/** Active rules only — used by the review engine. */
+export async function getActiveDeepRules(): Promise<DeepRule[]> {
+  const rules = await getDeepRules();
+  return rules.filter((r) => r.is_active);
+}
+
+export async function saveDeepRule(rule: DeepRule): Promise<DeepRule> {
+  const db = getDb();
+  await db.deepRules.put(rule);
+  return rule;
+}
+
+export async function deleteDeepRule(id: string): Promise<void> {
+  const db = getDb();
+  await db.deepRules.delete(id);
+}
+
+/** Re-seed every built-in default, reverting edits/deletions (custom rules untouched). */
+export async function restoreDefaultDeepRules(): Promise<void> {
+  const db = getDb();
+  for (const rule of BUILTIN_RULE_DEFAULTS) {
+    await db.deepRules.put({ ...rule });
+  }
+}
+
+// ── User profiles / roles (client-side RBAC) ────────────────────────────────
+
+export const DEFAULT_ADMIN_PROFILE_ID = "profile-admin-default";
+
+/** Ensure at least one Admin profile exists. Idempotent. */
+let seedProfilesPromise: Promise<void> | null = null;
+export function seedDefaultProfiles(): Promise<void> {
+  if (!seedProfilesPromise) {
+    seedProfilesPromise = (async () => {
+      const db = getDb();
+      const count = await db.profiles.count();
+      if (count === 0) {
+        await db.profiles.add({
+          id: DEFAULT_ADMIN_PROFILE_ID,
+          name: "Administrator",
+          email: "",
+          role: "admin",
+          createdAt: new Date(),
+        });
+      }
+    })().catch((err) => {
+      seedProfilesPromise = null;
+      throw err;
+    });
+  }
+  return seedProfilesPromise;
+}
+
+export async function getProfiles(): Promise<Profile[]> {
+  const db = getDb();
+  await seedDefaultProfiles();
+  const all = await db.profiles.toArray();
+  return all
+    .map((p) => ({ ...p, createdAt: new Date(p.createdAt) }))
+    .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+}
+
+export async function addProfile(input: Omit<Profile, "id" | "createdAt">): Promise<Profile> {
+  const db = getDb();
+  const profile: Profile = { ...input, id: crypto.randomUUID(), createdAt: new Date() };
+  await db.profiles.add(profile);
+  return profile;
+}
+
+export async function updateProfileRecord(
+  id: string,
+  changes: Partial<Omit<Profile, "id" | "createdAt">>
+): Promise<void> {
+  const db = getDb();
+  await db.profiles.update(id, changes);
+}
+
+export async function deleteProfile(id: string): Promise<void> {
+  const db = getDb();
+  await db.profiles.delete(id);
+}
+
+/** Map of proposalId → latest saved deep review, for list/dashboard/analytics views. */
+export async function getDeepReviewMap(): Promise<Map<string, DeepReview>> {
+  const db = getDb();
+  const all = await db.deepReviews.toArray();
+  const map = new Map<string, DeepReview>();
+  for (const dr of all) {
+    const existing = map.get(dr.proposalId);
+    if (!existing || new Date(dr.analyzed_at) > new Date(existing.analyzed_at)) {
+      map.set(dr.proposalId, dr);
+    }
+  }
+  return map;
 }
 
 export async function exportAll(): Promise<Record<string, unknown[]>> {
@@ -519,8 +543,7 @@ export async function exportAll(): Promise<Record<string, unknown[]>> {
     comments: await db.comments.toArray(),
     workflowCycles: await db.workflowCycles.toArray(),
     workflowEvents: await db.workflowEvents.toArray(),
-    rulesets: await db.rulesets.toArray(),
-    aiReviews: await db.aiReviews.toArray(),
+    deepReviews: await db.deepReviews.toArray(),
   };
 }
 
@@ -532,15 +555,15 @@ export async function clearAll(): Promise<void> {
     db.comments,
     db.workflowCycles,
     db.workflowEvents,
-    db.rulesets,
-    db.aiReviews,
+    db.deepReviews,
+    db.deepRules,
   ], async () => {
-    await db.aiReviews.clear();
+    await db.deepRules.clear();
+    await db.deepReviews.clear();
     await db.workflowEvents.clear();
     await db.workflowCycles.clear();
     await db.comments.clear();
     await db.documents.clear();
-    await db.rulesets.clear();
     await db.proposals.clear();
   });
 }

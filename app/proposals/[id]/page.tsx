@@ -3,23 +3,24 @@
 import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
-import { getProposal, updateProposal } from "@/lib/db";
+import { getProposal, updateProposal, getDeepReview } from "@/lib/db";
 import type { Proposal, ProposalStatus } from "@/lib/types";
-import { formatDate, formatDateTime, formatBytes } from "@/lib/utils";
+import type { DeepReview } from "@/lib/deep-review/types";
+import { formatDate, formatDateTime, formatBytes, cn } from "@/lib/utils";
 import { statusLabels, categoryLabels } from "@/lib/types";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Select } from "@/components/ui/select";
-import { ArrowLeft, FileText, MessageSquare, Eye, Pencil, ClipboardList, Route, Upload } from "lucide-react";
+import { ArrowLeft, FileText, MessageSquare, Eye, Route, Upload, Sparkles } from "lucide-react";
 import { stageLabels } from "@/lib/workflow-config";
-import { AiReviewScoreCard } from "@/components/ai-review-score-card";
 
 export default function ProposalDetailPage() {
   const params = useParams();
   const router = useRouter();
   const id = params.id as string;
   const [proposal, setProposal] = useState<Proposal | null>(null);
+  const [deepReview, setDeepReview] = useState<DeepReview | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -28,6 +29,7 @@ export default function ProposalDetailPage() {
       setProposal(data || null);
       setLoading(false);
     });
+    getDeepReview(id).then((dr) => setDeepReview(dr || null));
   }, [id]);
 
   const changeStatus = async (status: ProposalStatus) => {
@@ -85,9 +87,9 @@ export default function ProposalDetailPage() {
               <Route size={18} className="mr-2" /> Roadmap
             </Button>
           </Link>
-          <Link href={`/proposals/${proposal.id}/review`}>
+          <Link href={`/proposals/${proposal.id}/ai-review`}>
             <Button>
-              <ClipboardList size={18} className="mr-2" /> Review
+              <Sparkles size={18} className="mr-2" /> AI Enabled Review
             </Button>
           </Link>
         </div>
@@ -205,31 +207,46 @@ export default function ProposalDetailPage() {
               <div>
                 <p className="text-xs font-medium uppercase text-text-tertiary">AI / Reviewer Summary</p>
                 <p className="mt-1 text-sm text-text-secondary">
-                  {proposal.summary || "No summary yet. Open the review workspace to add one."}
+                  {deepReview?.summary || proposal.summary || "No review yet. Run the AI Enabled Review to generate one."}
                 </p>
               </div>
-              {proposal.aiReview && (
-                <AiReviewScoreCard
-                  aiReview={proposal.aiReview}
-                  ratings={proposal.aiReview.ratings}
-                  rulesetName={undefined}
-                  finalProposalCount={proposal.documents.filter((d) => d.category === "final_proposal").length}
-                  contextDocCount={proposal.documents.filter((d) => d.category !== "final_proposal").length}
-                  compact
-                />
-              )}
-              {!proposal.aiReview && proposal.score?.overall && (
-                <div className="rounded-xl bg-accent-bg p-4">
-                  <p className="text-xs font-medium uppercase text-accent-text">Legacy Overall Score</p>
-                  <div className="mt-1 flex items-center gap-2">
-                    <span className="text-3xl font-bold text-text-primary">{proposal.score.overall}</span>
-                    <span className="text-sm text-text-secondary">/ 5</span>
+              {deepReview && (
+                <div
+                  className={cn(
+                    "rounded-xl p-4",
+                    deepReview.overall_score >= 80
+                      ? "bg-green-50 dark:bg-green-500/10"
+                      : deepReview.overall_score >= 60
+                        ? "bg-amber-50 dark:bg-amber-500/10"
+                        : "bg-red-50 dark:bg-red-500/10"
+                  )}
+                >
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-xs font-medium uppercase text-text-tertiary">AI Enabled Review</p>
+                      <p
+                        className={cn(
+                          "text-sm font-semibold",
+                          deepReview.verdict === "Critical" ? "text-red-700 dark:text-red-400" : "text-text-primary"
+                        )}
+                      >
+                        {deepReview.verdict}
+                      </p>
+                    </div>
+                    <div className="text-right">
+                      <span className="text-3xl font-bold text-text-primary">{deepReview.overall_score}</span>
+                      <span className="text-sm text-text-secondary"> / 100</span>
+                    </div>
                   </div>
+                  <p className="mt-2 text-xs text-text-tertiary">
+                    {deepReview.criteria_passed}/{deepReview.criteria_total} criteria passed ·{" "}
+                    {deepReview.critical_issues.length} critical issue(s)
+                  </p>
                 </div>
               )}
-              <Link href={`/proposals/${proposal.id}/review`}>
+              <Link href={`/proposals/${proposal.id}/ai-review`}>
                 <Button variant="outline" className="w-full">
-                  <Pencil size={16} className="mr-2" /> Edit Review
+                  <Sparkles size={16} className="mr-2" /> {deepReview ? "View AI Enabled Review" : "Run AI Enabled Review"}
                 </Button>
               </Link>
             </CardContent>

@@ -2,8 +2,9 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { getProposals } from "@/lib/db";
+import { getProposals, getDeepReviewMap } from "@/lib/db";
 import type { Proposal } from "@/lib/types";
+import type { DeepReview } from "@/lib/deep-review/types";
 import { statusLabels } from "@/lib/types";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -25,6 +26,7 @@ import { ProposalActionModal } from "@/components/proposal-action-modal";
 
 export default function DashboardPage() {
   const [proposals, setProposals] = useState<Proposal[]>([]);
+  const [reviews, setReviews] = useState<Map<string, DeepReview>>(new Map());
   const [loading, setLoading] = useState(true);
   const [selectedProposal, setSelectedProposal] = useState<Proposal | null>(null);
 
@@ -33,6 +35,7 @@ export default function DashboardPage() {
       setProposals(data);
       setLoading(false);
     });
+    getDeepReviewMap().then(setReviews);
   }, []);
 
   const inRework = proposals.filter((p) => p.workflowStage?.endsWith("_rework")).length;
@@ -148,12 +151,12 @@ export default function DashboardPage() {
                       <p className="text-xs text-text-tertiary">{proposal.clientName}</p>
                     </div>
                     <div className="flex items-center gap-3 px-2">
-                      {proposal.aiReview && (
+                      {reviews.get(proposal.id) && (
                         <span className={cn(
                           "rounded-md px-2 py-0.5 text-xs font-semibold",
-                          proposal.aiReview.overallScore >= 6 ? "bg-green-100 text-green-700" : "bg-red-100 text-red-700"
+                          reviews.get(proposal.id)!.overall_score >= 60 ? "bg-green-100 text-green-700" : "bg-red-100 text-red-700"
                         )}>
-                          {proposal.aiReview.overallScore}/10
+                          {reviews.get(proposal.id)!.overall_score}/100
                         </span>
                       )}
                       <span className="text-xs text-text-tertiary">
