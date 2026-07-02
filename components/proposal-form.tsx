@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { addProposal } from "@/lib/db";
 import { sampleProposal, sampleDocuments } from "@/lib/sample-proposal";
@@ -23,10 +23,24 @@ import {
   getProposalReviewers,
   getProposalRegions,
 } from "@/lib/workspace-config";
+import { getTeamMembers, type TeamMember, type TeamMemberRole } from "@/lib/team-members";
 import { Check, ChevronLeft, ChevronRight, Loader2 } from "lucide-react";
 import { cn, formatBytes } from "@/lib/utils";
 
 const supportingCategories: DocumentCategory[] = ["rfp", "transcript", "customer_doc"];
+
+function combineAssignableNames(
+  workspaceNames: string[],
+  role: TeamMemberRole,
+  members: TeamMember[]
+): { name: string; team?: string }[] {
+  const map = new Map<string, string | undefined>();
+  workspaceNames.forEach((n) => map.set(n, undefined));
+  members
+    .filter((m) => m.role === role)
+    .forEach((m) => map.set(m.name, m.team));
+  return Array.from(map.entries()).map(([name, team]) => ({ name, team }));
+}
 
 export function ProposalForm() {
   const router = useRouter();
@@ -36,6 +50,7 @@ export function ProposalForm() {
     title: "",
     clientName: "",
     description: "",
+    initiationDate: "",
     dueDate: "",
     technology: "",
     projectType: "",
@@ -54,11 +69,13 @@ export function ProposalForm() {
 
   const technologies = getTechnologies();
   const projectTypes = getProjectTypes();
-  const sparcOwners = getSparcOwners();
-  const sparcMentors = getSparcMentors();
-  const gtmOwners = getGtmOwners();
-  const proposalReviewers = getProposalReviewers();
   const proposalRegions = getProposalRegions();
+
+  const teamMembers = useMemo(() => getTeamMembers(), []);
+  const sparcOwners = combineAssignableNames(getSparcOwners(), "sparc_owner", teamMembers);
+  const sparcMentors = combineAssignableNames(getSparcMentors(), "sparc_mentor", teamMembers);
+  const gtmOwners = combineAssignableNames(getGtmOwners(), "gtm_owner", teamMembers);
+  const proposalReviewers = combineAssignableNames(getProposalReviewers(), "proposal_reviewer", teamMembers);
 
   const allDocuments = [
     ...form.documents.rfp,
@@ -115,6 +132,7 @@ export function ProposalForm() {
         title: form.title,
         clientName: form.clientName,
         description: form.description,
+        initiationDate: form.initiationDate ? new Date(form.initiationDate) : undefined,
         dueDate: form.dueDate ? new Date(form.dueDate) : undefined,
         technology: form.technology || undefined,
         projectType: form.projectType || undefined,
@@ -259,9 +277,9 @@ export function ProposalForm() {
                     onChange={(e) => setForm({ ...form, sparcOwner: e.target.value })}
                   >
                     <option value="">Select Sparc owner...</option>
-                    {sparcOwners.map((owner) => (
-                      <option key={owner} value={owner}>
-                        {owner}
+                    {sparcOwners.map(({ name, team }) => (
+                      <option key={name} value={name}>
+                        {team ? `${name} (${team})` : name}
                       </option>
                     ))}
                   </Select>
@@ -274,9 +292,9 @@ export function ProposalForm() {
                     onChange={(e) => setForm({ ...form, sparcMentor: e.target.value })}
                   >
                     <option value="">Select Sparc mentor...</option>
-                    {sparcMentors.map((mentor) => (
-                      <option key={mentor} value={mentor}>
-                        {mentor}
+                    {sparcMentors.map(({ name, team }) => (
+                      <option key={name} value={name}>
+                        {team ? `${name} (${team})` : name}
                       </option>
                     ))}
                   </Select>
@@ -291,9 +309,9 @@ export function ProposalForm() {
                     onChange={(e) => setForm({ ...form, gtmOwner: e.target.value })}
                   >
                     <option value="">Select GTM owner...</option>
-                    {gtmOwners.map((owner) => (
-                      <option key={owner} value={owner}>
-                        {owner}
+                    {gtmOwners.map(({ name, team }) => (
+                      <option key={name} value={name}>
+                        {team ? `${name} (${team})` : name}
                       </option>
                     ))}
                   </Select>
@@ -306,9 +324,9 @@ export function ProposalForm() {
                     onChange={(e) => setForm({ ...form, proposalReviewer: e.target.value })}
                   >
                     <option value="">Select reviewer...</option>
-                    {proposalReviewers.map((reviewer) => (
-                      <option key={reviewer} value={reviewer}>
-                        {reviewer}
+                    {proposalReviewers.map(({ name, team }) => (
+                      <option key={name} value={name}>
+                        {team ? `${name} (${team})` : name}
                       </option>
                     ))}
                   </Select>
@@ -329,14 +347,25 @@ export function ProposalForm() {
                   </Select>
                 </div>
               </div>
-              <div className="space-y-2">
-                <Label htmlFor="dueDate">Response Due Date</Label>
-                <Input
-                  id="dueDate"
-                  type="date"
-                  value={form.dueDate}
-                  onChange={(e) => setForm({ ...form, dueDate: e.target.value })}
-                />
+              <div className="grid gap-4 md:grid-cols-2">
+                <div className="space-y-2">
+                  <Label htmlFor="initiationDate">Proposal Initiation Date</Label>
+                  <Input
+                    id="initiationDate"
+                    type="date"
+                    value={form.initiationDate}
+                    onChange={(e) => setForm({ ...form, initiationDate: e.target.value })}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="dueDate">Response Due Date</Label>
+                  <Input
+                    id="dueDate"
+                    type="date"
+                    value={form.dueDate}
+                    onChange={(e) => setForm({ ...form, dueDate: e.target.value })}
+                  />
+                </div>
               </div>
               <div className="space-y-2">
                 <Label htmlFor="description">Description / Notes</Label>
@@ -422,6 +451,12 @@ export function ProposalForm() {
                   <div>
                     <dt className="text-xs font-medium uppercase text-text-tertiary">Client</dt>
                     <dd className="text-sm font-medium text-text-primary">{form.clientName}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-xs font-medium uppercase text-text-tertiary">Initiation Date</dt>
+                    <dd className="text-sm text-text-primary">
+                      {form.initiationDate ? new Date(form.initiationDate).toLocaleDateString() : "Not set"}
+                    </dd>
                   </div>
                   <div>
                     <dt className="text-xs font-medium uppercase text-text-tertiary">Due Date</dt>

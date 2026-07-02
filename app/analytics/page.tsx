@@ -2,6 +2,10 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import { motion } from "framer-motion";
+import { Responsive as ResponsiveGridLayout, type Layout, useContainerWidth } from "react-grid-layout";
+import "react-grid-layout/css/styles.css";
+import "react-resizable/css/styles.css";
 import { getProposals, getDeepReviewMap } from "@/lib/db";
 import type { Proposal, ProposalStatus } from "@/lib/types";
 import { statusLabels } from "@/lib/types";
@@ -14,6 +18,10 @@ import { cn } from "@/lib/utils";
 import {
   BarChart,
   Bar,
+  LineChart,
+  Line,
+  AreaChart,
+  Area,
   PieChart,
   Pie,
   Cell,
@@ -24,7 +32,7 @@ import {
   ResponsiveContainer,
   Legend,
 } from "recharts";
-import { BarChart3, FileText, Gauge, AlertTriangle, CheckCircle2, Filter, RotateCcw } from "lucide-react";
+import { BarChart3, FileText, Gauge, AlertTriangle, CheckCircle2, Filter, RotateCcw, GripVertical } from "lucide-react";
 
 // ── Filter / segment dimensions ─────────────────────────────────────────────
 
@@ -58,6 +66,42 @@ const STATUS_COLORS: Record<ProposalStatus, string> = {
 };
 
 const BAR_PALETTE = ["#6366f1", "#8b5cf6", "#0ea5e9", "#14b8a6", "#f59e0b", "#ec4899", "#22c55e", "#ef4444"];
+
+
+const LAYOUT_KEY = "prop-review:analytics-layout";
+
+const defaultLayouts = {
+  lg: [
+    { i: "status", x: 0, y: 0, w: 6, h: 10, minW: 3, minH: 6 },
+    { i: "trend", x: 6, y: 0, w: 6, h: 10, minW: 3, minH: 6 },
+    { i: "segmentCount", x: 0, y: 10, w: 6, h: 12, minW: 3, minH: 6 },
+    { i: "segmentScore", x: 6, y: 10, w: 6, h: 12, minW: 3, minH: 6 },
+  ],
+  md: [
+    { i: "status", x: 0, y: 0, w: 5, h: 10, minW: 3, minH: 6 },
+    { i: "trend", x: 5, y: 0, w: 5, h: 10, minW: 3, minH: 6 },
+    { i: "segmentCount", x: 0, y: 10, w: 5, h: 12, minW: 3, minH: 6 },
+    { i: "segmentScore", x: 5, y: 10, w: 5, h: 12, minW: 3, minH: 6 },
+  ],
+  sm: [
+    { i: "status", x: 0, y: 0, w: 6, h: 10, minW: 3, minH: 6 },
+    { i: "trend", x: 0, y: 10, w: 6, h: 10, minW: 3, minH: 6 },
+    { i: "segmentCount", x: 0, y: 20, w: 6, h: 12, minW: 3, minH: 6 },
+    { i: "segmentScore", x: 0, y: 32, w: 6, h: 12, minW: 3, minH: 6 },
+  ],
+  xs: [
+    { i: "status", x: 0, y: 0, w: 4, h: 10, minW: 2, minH: 6 },
+    { i: "trend", x: 0, y: 10, w: 4, h: 10, minW: 2, minH: 6 },
+    { i: "segmentCount", x: 0, y: 20, w: 4, h: 12, minW: 2, minH: 6 },
+    { i: "segmentScore", x: 0, y: 32, w: 4, h: 12, minW: 2, minH: 6 },
+  ],
+  xxs: [
+    { i: "status", x: 0, y: 0, w: 2, h: 10, minW: 2, minH: 6 },
+    { i: "trend", x: 0, y: 10, w: 2, h: 10, minW: 2, minH: 6 },
+    { i: "segmentCount", x: 0, y: 20, w: 2, h: 12, minW: 2, minH: 6 },
+    { i: "segmentScore", x: 0, y: 32, w: 2, h: 12, minW: 2, minH: 6 },
+  ],
+};
 
 function scoreColor(s: number) {
   return s >= 80 ? "text-green-600" : s >= 60 ? "text-amber-600" : "text-red-600";
@@ -106,6 +150,35 @@ export default function AnalyticsPage() {
   const [region, setRegion] = useState<string>("all");
   const [owner, setOwner] = useState<string>("all");
   const [segmentBy, setSegmentBy] = useState<SegmentKey>("sparcOwner");
+  const [trendChartType, setTrendChartType] = useState<"bar" | "line" | "area">("bar");
+  const [statusChartType, setStatusChartType] = useState<"pie" | "donut">("pie");
+  const [layouts, setLayouts] = useState(defaultLayouts);
+  const { containerRef: gridRef, width } = useContainerWidth();
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      const saved = window.localStorage.getItem(LAYOUT_KEY);
+      if (saved) setLayouts(JSON.parse(saved));
+    } catch {
+      // ignore corrupt layout
+    }
+  }, []);
+
+  const handleLayoutChange = (_currentLayout: Layout, allLayouts: Partial<Record<string, Layout>>) => {
+    const next = { ...defaultLayouts, ...allLayouts } as typeof defaultLayouts;
+    setLayouts(next);
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem(LAYOUT_KEY, JSON.stringify(next));
+    }
+  };
+
+  const resetLayout = () => {
+    setLayouts(defaultLayouts);
+    if (typeof window !== "undefined") {
+      window.localStorage.removeItem(LAYOUT_KEY);
+    }
+  };
 
   useEffect(() => {
     Promise.all([getProposals(), getDeepReviewMap()]).then(([p, m]) => {
@@ -210,12 +283,12 @@ export default function AnalyticsPage() {
 
   return (
     <div className="space-y-6">
-      <div>
+      <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.4 }}>
         <h1 className="flex items-center gap-2 text-2xl font-bold text-text-primary sm:text-3xl">
           <BarChart3 size={28} className="text-primary-600" /> Analytics
         </h1>
         <p className="text-text-secondary">Proposal pipeline insights — filter and segment across your proposals.</p>
-      </div>
+      </motion.div>
 
       {/* Filter toolbar */}
       <Card>
@@ -305,100 +378,193 @@ export default function AnalyticsPage() {
       ) : (
         <>
           {/* KPIs */}
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <motion.div
+            className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4"
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.4, delay: 0.1 }}
+          >
             <Kpi icon={FileText} label="Proposals" value={kpis.total} sub={`${kpis.reviewed} reviewed`} color="text-primary-600" bg="bg-primary-50 dark:bg-primary-50/10" />
             <Kpi icon={Gauge} label="Avg. Review Score" value={kpis.reviewed ? `${kpis.avgScore}/100` : "—"} sub={kpis.reviewed ? "across reviewed" : "no reviews yet"} color={scoreColor(kpis.avgScore)} bg="bg-amber-50 dark:bg-amber-50/10" />
             <Kpi icon={CheckCircle2} label="Approved" value={kpis.approved} sub={kpis.total ? `${Math.round((kpis.approved / kpis.total) * 100)}% of filtered` : ""} color="text-green-600" bg="bg-green-50 dark:bg-green-50/10" />
             <Kpi icon={AlertTriangle} label="Critical (Do Not Send)" value={kpis.critical} sub="reviewed proposals" color="text-red-600" bg="bg-red-50 dark:bg-red-50/10" />
-          </div>
+          </motion.div>
 
-          <div className="grid gap-6 lg:grid-cols-2">
-            {/* Status breakdown */}
-            <Card>
-              <CardHeader>
-                <CardTitle>Proposals by status</CardTitle>
-                <CardDescription>Pipeline distribution for the current filters.</CardDescription>
-              </CardHeader>
-              <CardContent>
-                <ResponsiveContainer width="100%" height={260}>
-                  <PieChart>
-                    <Pie data={statusData} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={90} label>
-                      {statusData.map((entry) => (
-                        <Cell key={entry.status} fill={STATUS_COLORS[entry.status]} />
-                      ))}
-                    </Pie>
-                    <Tooltip />
-                    <Legend />
-                  </PieChart>
-                </ResponsiveContainer>
-              </CardContent>
-            </Card>
+          <motion.div
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.4, delay: 0.2 }}
+          >
+            <div className="mb-2 flex items-center justify-end">
+              <Button variant="ghost" size="sm" onClick={resetLayout}>
+                <RotateCcw size={14} className="mr-1" /> Reset layout
+              </Button>
+            </div>
+            <div ref={gridRef} className="min-h-[400px]">
+              {width > 0 && (
+                <ResponsiveGridLayout
+                  className="layout"
+                  width={width}
+                  layouts={layouts}
+                  onLayoutChange={handleLayoutChange}
+                  breakpoints={{ lg: 1200, md: 996, sm: 768, xs: 480, xxs: 0 }}
+                  cols={{ lg: 12, md: 10, sm: 6, xs: 4, xxs: 2 }}
+                  rowHeight={30}
+                  dragConfig={{ handle: ".drag-handle" }}
+                  resizeConfig={{ handles: ["se"] }}
+                  margin={[16, 16]}
+                >
+              {/* Status breakdown */}
+              <Card key="status">
+                <CardHeader className="drag-handle cursor-move flex-row items-center justify-between">
+                  <div>
+                    <CardTitle>Proposals by status</CardTitle>
+                    <CardDescription>Pipeline distribution for the current filters.</CardDescription>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Select
+                      value={statusChartType}
+                      onChange={(e) => setStatusChartType(e.target.value as typeof statusChartType)}
+                      className="w-28"
+                      aria-label="Status chart type"
+                    >
+                      <option value="pie">Pie</option>
+                      <option value="donut">Donut</option>
+                    </Select>
+                    <GripVertical size={18} className="text-text-muted" />
+                  </div>
+                </CardHeader>
+                <CardContent>
+                  <ResponsiveContainer width="100%" height={260}>
+                    <PieChart>
+                      <Pie
+                        data={statusData}
+                        dataKey="value"
+                        nameKey="name"
+                        cx="50%"
+                        cy="50%"
+                        outerRadius={90}
+                        innerRadius={statusChartType === "donut" ? 50 : 0}
+                        label
+                      >
+                        {statusData.map((entry) => (
+                          <Cell key={entry.status} fill={STATUS_COLORS[entry.status]} />
+                        ))}
+                      </Pie>
+                      <Tooltip />
+                      <Legend />
+                    </PieChart>
+                  </ResponsiveContainer>
+                </CardContent>
+              </Card>
 
-            {/* Created over time */}
-            <Card>
-              <CardHeader>
-                <CardTitle>Proposals created over time</CardTitle>
-                <CardDescription>Monthly volume (last 12 months).</CardDescription>
-              </CardHeader>
-              <CardContent>
-                <ResponsiveContainer width="100%" height={260}>
-                  <BarChart data={trendData}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
-                    <XAxis dataKey="name" fontSize={11} />
-                    <YAxis allowDecimals={false} fontSize={12} />
-                    <Tooltip />
-                    <Bar dataKey="count" fill="#6366f1" radius={[6, 6, 0, 0]} />
-                  </BarChart>
-                </ResponsiveContainer>
-              </CardContent>
-            </Card>
+              {/* Created over time */}
+              <Card key="trend">
+                <CardHeader className="drag-handle cursor-move flex-row items-center justify-between">
+                  <div>
+                    <CardTitle>Proposals created over time</CardTitle>
+                    <CardDescription>Monthly volume (last 12 months).</CardDescription>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Select
+                      value={trendChartType}
+                      onChange={(e) => setTrendChartType(e.target.value as typeof trendChartType)}
+                      className="w-28"
+                      aria-label="Trend chart type"
+                    >
+                      <option value="bar">Bar</option>
+                      <option value="line">Line</option>
+                      <option value="area">Area</option>
+                    </Select>
+                    <GripVertical size={18} className="text-text-muted" />
+                  </div>
+                </CardHeader>
+                <CardContent>
+                  <ResponsiveContainer width="100%" height={260}>
+                    {trendChartType === "bar" ? (
+                      <BarChart data={trendData}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+                        <XAxis dataKey="name" fontSize={11} />
+                        <YAxis allowDecimals={false} fontSize={12} />
+                        <Tooltip />
+                        <Bar dataKey="count" fill="#6366f1" radius={[6, 6, 0, 0]} />
+                      </BarChart>
+                    ) : trendChartType === "line" ? (
+                      <LineChart data={trendData}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+                        <XAxis dataKey="name" fontSize={11} />
+                        <YAxis allowDecimals={false} fontSize={12} />
+                        <Tooltip />
+                        <Line type="monotone" dataKey="count" stroke="#6366f1" strokeWidth={2} dot={{ r: 3 }} />
+                      </LineChart>
+                    ) : (
+                      <AreaChart data={trendData}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+                        <XAxis dataKey="name" fontSize={11} />
+                        <YAxis allowDecimals={false} fontSize={12} />
+                        <Tooltip />
+                        <Area type="monotone" dataKey="count" stroke="#6366f1" fill="#6366f1" fillOpacity={0.2} />
+                      </AreaChart>
+                    )}
+                  </ResponsiveContainer>
+                </CardContent>
+              </Card>
 
-            {/* Count by segment */}
-            <Card>
-              <CardHeader>
-                <CardTitle>Proposals by {segmentLabel}</CardTitle>
-                <CardDescription>Volume grouped by the selected segment.</CardDescription>
-              </CardHeader>
-              <CardContent>
-                <ResponsiveContainer width="100%" height={Math.max(260, segmentData.length * 34)}>
-                  <BarChart data={segmentData} layout="vertical" margin={{ left: 20 }}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
-                    <XAxis type="number" allowDecimals={false} fontSize={12} />
-                    <YAxis type="category" dataKey="name" width={130} fontSize={11} />
-                    <Tooltip />
-                    <Bar dataKey="count" radius={[0, 6, 6, 0]}>
-                      {segmentData.map((entry, i) => (
-                        <Cell key={entry.name} fill={BAR_PALETTE[i % BAR_PALETTE.length]} />
-                      ))}
-                    </Bar>
-                  </BarChart>
-                </ResponsiveContainer>
-              </CardContent>
-            </Card>
+              {/* Count by segment */}
+              <Card key="segmentCount">
+                <CardHeader className="drag-handle cursor-move flex-row items-center justify-between">
+                  <div>
+                    <CardTitle>Proposals by {segmentLabel}</CardTitle>
+                    <CardDescription>Volume grouped by the selected segment.</CardDescription>
+                  </div>
+                  <GripVertical size={18} className="text-text-muted" />
+                </CardHeader>
+                <CardContent>
+                  <ResponsiveContainer width="100%" height={Math.max(260, segmentData.length * 34)}>
+                    <BarChart data={segmentData} layout="vertical" margin={{ left: 20 }}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+                      <XAxis type="number" allowDecimals={false} fontSize={12} />
+                      <YAxis type="category" dataKey="name" width={130} fontSize={11} />
+                      <Tooltip />
+                      <Bar dataKey="count" radius={[0, 6, 6, 0]}>
+                        {segmentData.map((entry, i) => (
+                          <Cell key={entry.name} fill={BAR_PALETTE[i % BAR_PALETTE.length]} />
+                        ))}
+                      </Bar>
+                    </BarChart>
+                  </ResponsiveContainer>
+                </CardContent>
+              </Card>
 
-            {/* Avg score by segment */}
-            <Card>
-              <CardHeader>
-                <CardTitle>Avg. review score by {segmentLabel}</CardTitle>
-                <CardDescription>Mean AI Enabled Review score (0–100) per segment.</CardDescription>
-              </CardHeader>
-              <CardContent>
-                <ResponsiveContainer width="100%" height={Math.max(260, segmentData.length * 34)}>
-                  <BarChart data={segmentData} layout="vertical" margin={{ left: 20 }}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
-                    <XAxis type="number" domain={[0, 100]} fontSize={12} />
-                    <YAxis type="category" dataKey="name" width={130} fontSize={11} />
-                    <Tooltip formatter={(value) => [`${value}/100`, "Avg score"]} />
-                    <Bar dataKey="avgScore" radius={[0, 6, 6, 0]}>
-                      {segmentData.map((entry) => (
-                        <Cell key={entry.name} fill={entry.avgScore >= 80 ? "#22c55e" : entry.avgScore >= 60 ? "#eab308" : "#ef4444"} />
-                      ))}
-                    </Bar>
-                  </BarChart>
-                </ResponsiveContainer>
-              </CardContent>
-            </Card>
-          </div>
+              {/* Avg score by segment */}
+              <Card key="segmentScore">
+                <CardHeader className="drag-handle cursor-move flex-row items-center justify-between">
+                  <div>
+                    <CardTitle>Avg. review score by {segmentLabel}</CardTitle>
+                    <CardDescription>Mean AI Enabled Review score (0–100) per segment.</CardDescription>
+                  </div>
+                  <GripVertical size={18} className="text-text-muted" />
+                </CardHeader>
+                <CardContent>
+                  <ResponsiveContainer width="100%" height={Math.max(260, segmentData.length * 34)}>
+                    <BarChart data={segmentData} layout="vertical" margin={{ left: 20 }}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+                      <XAxis type="number" domain={[0, 100]} fontSize={12} />
+                      <YAxis type="category" dataKey="name" width={130} fontSize={11} />
+                      <Tooltip formatter={(value) => [`${value}/100`, "Avg score"]} />
+                      <Bar dataKey="avgScore" radius={[0, 6, 6, 0]}>
+                        {segmentData.map((entry) => (
+                          <Cell key={entry.name} fill={entry.avgScore >= 80 ? "#22c55e" : entry.avgScore >= 60 ? "#eab308" : "#ef4444"} />
+                        ))}
+                      </Bar>
+                    </BarChart>
+                  </ResponsiveContainer>
+                </CardContent>
+              </Card>
+                </ResponsiveGridLayout>
+              )}
+            </div>
+          </motion.div>
 
           {/* Table */}
           <Card>

@@ -17,6 +17,7 @@ import {
   ShieldCheck,
   ChevronDown,
   Check,
+  Users,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useEffect, useRef, useState } from "react";
@@ -31,6 +32,7 @@ const navItems: { href: string; label: string; icon: React.ElementType; action?:
   { href: "/proposals", label: "Proposals", icon: FileText },
   { href: "/proposals/new", label: "New Review", icon: PlusCircle, action: "create_proposal" },
   { href: "/analytics", label: "Analytics", icon: BarChart3 },
+  { href: "/team-activity", label: "Team Activity", icon: Users },
   { href: "/rules", label: "Rules", icon: SlidersHorizontal, action: "manage_rules" },
   { href: "/profiles", label: "Profiles", icon: ShieldCheck, action: "manage_profiles" },
   { href: "/settings", label: "Settings", icon: Settings, action: "manage_settings" },
@@ -226,6 +228,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
                 { label: "New proposal review", href: "/proposals/new", icon: PlusCircle, action: "create_proposal" as Action },
                 { label: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
                 { label: "Analytics", href: "/analytics", icon: BarChart3 },
+                { label: "Team Activity", href: "/team-activity", icon: Users },
                 { label: "Rules", href: "/rules", icon: SlidersHorizontal, action: "manage_rules" as Action },
                 { label: "Profiles", href: "/profiles", icon: ShieldCheck, action: "manage_profiles" as Action },
                 { label: "Settings", href: "/settings", icon: Settings, action: "manage_settings" as Action },

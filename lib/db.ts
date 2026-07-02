@@ -7,6 +7,7 @@ import type {
   Comment,
   WorkflowCycle,
   WorkflowEvent,
+  TeamActivity,
 } from "./types";
 import { seedDemoData } from "./demo-data";
 import type { DeepReview } from "./deep-review/types";
@@ -27,6 +28,7 @@ class ProposalDatabase extends Dexie {
   deepReviews!: EntityTable<DeepReview, "id">;
   deepRules!: EntityTable<DeepRule, "id">;
   profiles!: EntityTable<Profile, "id">;
+  teamActivities!: EntityTable<TeamActivity, "id">;
 
   constructor() {
     super("ProposalReviewDB");
@@ -56,6 +58,10 @@ class ProposalDatabase extends Dexie {
     // v8: user profiles / roles (client-side RBAC).
     this.version(8).stores({
       profiles: "id, role",
+    });
+    // v9: team activities for the Team Activity Dashboard.
+    this.version(9).stores({
+      teamActivities: "++id, memberName, category, [memberName+startDate]",
     });
   }
 }
@@ -109,9 +115,10 @@ async function hydrateProposal(record: ProposalRecord): Promise<Proposal> {
 
 export async function seedIfEmpty(): Promise<void> {
   const db = getDb();
-  const count = await db.proposals.count();
-  if (count === 0) {
-    const proposals = seedDemoData();
+  const proposalCount = await db.proposals.count();
+  const { proposals, teamActivities } = seedDemoData();
+
+  if (proposalCount === 0) {
     for (const proposal of proposals) {
       const { documents, comments, workflowCycles, workflowEvents, ...record } = proposal;
       await db.proposals.add(record as ProposalRecord);
@@ -120,6 +127,13 @@ export async function seedIfEmpty(): Promise<void> {
       if (workflowCycles?.length) await db.workflowCycles.bulkAdd(workflowCycles as WorkflowCycle[]);
       if (workflowEvents?.length) await db.workflowEvents.bulkAdd(workflowEvents as WorkflowEvent[]);
     }
+  }
+
+  // Seed demo team activities independently so the dashboard is populated even
+  // for existing workspaces that already have proposals.
+  const activityCount = await db.teamActivities.count();
+  if (activityCount === 0 && teamActivities?.length) {
+    await db.teamActivities.bulkAdd(teamActivities as TeamActivity[]);
   }
 }
 
@@ -533,6 +547,51 @@ export async function deleteProfile(id: string): Promise<void> {
 }
 
 /** Map of proposalId → latest saved deep review, for list/dashboard/analytics views. */
+export async function getTeamActivities(): Promise<TeamActivity[]> {
+  const db = getDb();
+  await seedIfEmpty();
+  const records = await db.teamActivities.orderBy("memberName").toArray();
+  return records.map((a) => ({
+    ...a,
+    startDate: new Date(a.startDate),
+    endDate: new Date(a.endDate),
+  }));
+}
+
+export async function addTeamActivity(input: Omit<TeamActivity, "id">): Promise<TeamActivity> {
+  const db = getDb();
+  const record: TeamActivity = {
+    ...input,
+    id: crypto.randomUUID(),
+  };
+  await db.teamActivities.add(record as TeamActivity);
+  return {
+    ...record,
+    startDate: new Date(record.startDate),
+    endDate: new Date(record.endDate),
+  };
+}
+
+export async function updateTeamActivity(
+  id: string,
+  changes: Partial<Omit<TeamActivity, "id">>
+): Promise<TeamActivity | undefined> {
+  const db = getDb();
+  await db.teamActivities.update(id, changes);
+  const record = await db.teamActivities.get(id);
+  if (!record) return undefined;
+  return {
+    ...record,
+    startDate: new Date(record.startDate),
+    endDate: new Date(record.endDate),
+  } as TeamActivity;
+}
+
+export async function deleteTeamActivity(id: string): Promise<void> {
+  const db = getDb();
+  await db.teamActivities.delete(id);
+}
+
 export async function getDeepReviewMap(): Promise<Map<string, DeepReview>> {
   const db = getDb();
   const all = await db.deepReviews.toArray();
@@ -555,6 +614,7 @@ export async function exportAll(): Promise<Record<string, unknown[]>> {
     workflowCycles: await db.workflowCycles.toArray(),
     workflowEvents: await db.workflowEvents.toArray(),
     deepReviews: await db.deepReviews.toArray(),
+    teamActivities: await db.teamActivities.toArray(),
   };
 }
 
@@ -568,6 +628,7 @@ export async function clearAll(): Promise<void> {
     db.workflowEvents,
     db.deepReviews,
     db.deepRules,
+    db.teamActivities,
   ], async () => {
     await db.deepRules.clear();
     await db.deepReviews.clear();
@@ -575,6 +636,7 @@ export async function clearAll(): Promise<void> {
     await db.workflowCycles.clear();
     await db.comments.clear();
     await db.documents.clear();
+    await db.teamActivities.clear();
     await db.proposals.clear();
   });
 }

@@ -91,6 +91,7 @@ export interface Proposal {
   clientName: string;
   description: string;
   status: ProposalStatus;
+  initiationDate?: Date;
   dueDate?: Date;
   technology?: string;
   projectType?: string;
@@ -119,6 +120,7 @@ export interface ProposalInput {
   title: string;
   clientName: string;
   description: string;
+  initiationDate?: string;
   dueDate?: string;
   technology?: string;
   projectType?: string;
@@ -144,3 +146,24 @@ export const categoryLabels: Record<DocumentCategory, string> = {
   customer_doc: "Customer Document",
   final_proposal: "Customer Final Proposal",
 };
+
+// ── Team Activity Dashboard ────────────────────────────────────────────────
+
+export type TeamActivityCategory =
+  | "customer"
+  | "capability"
+  | "assessment"
+  | "idea"
+  | "internal"
+  | "other";
+
+export interface TeamActivity {
+  id: string;
+  memberName: string;
+  title: string;
+  startDate: Date;
+  endDate: Date;
+  category: TeamActivityCategory;
+  proposalId?: string;
+  notes?: string;
+}

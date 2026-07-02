@@ -20,6 +20,7 @@ import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
 import { Plus, Pencil, Trash2, ShieldCheck, UserCheck } from "lucide-react";
+import { TeamMemberSettings } from "@/components/team-member-settings";
 
 const ROLE_BADGE: Record<Role, string> = {
   admin: "bg-violet-100 text-violet-700 dark:bg-violet-500/15 dark:text-violet-300",
@@ -204,6 +205,9 @@ function ProfilesManager() {
           )}
         </CardContent>
       </Card>
+
+      {/* Team members */}
+      <TeamMemberSettings />
 
       {/* Editor dialog */}
       <Dialog open={editor !== null} onClose={() => setEditor(null)} className="max-w-md">

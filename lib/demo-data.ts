@@ -1,4 +1,4 @@
-import type { Proposal, UploadedFile, Comment, WorkflowCycle, WorkflowEvent } from "./types";
+import type { Proposal, UploadedFile, Comment, WorkflowCycle, WorkflowEvent, TeamActivity } from "./types";
 
 const now = new Date();
 
@@ -72,7 +72,26 @@ function workflowEvent(
   };
 }
 
-export function seedDemoData(): Proposal[] {
+function teamActivity(
+  memberName: string,
+  title: string,
+  category: TeamActivity["category"],
+  startDayOffset: number,
+  endDayOffset: number,
+  notes?: string
+): TeamActivity {
+  return {
+    id: crypto.randomUUID(),
+    memberName,
+    title,
+    category,
+    startDate: new Date(now.getTime() + 1000 * 60 * 60 * 24 * startDayOffset),
+    endDate: new Date(now.getTime() + 1000 * 60 * 60 * 24 * endDayOffset),
+    notes,
+  };
+}
+
+export function seedDemoData(): { proposals: Proposal[]; teamActivities: TeamActivity[] } {
   const p1Id = crypto.randomUUID();
   const p2Id = crypto.randomUUID();
   const p3Id = crypto.randomUUID();
@@ -107,16 +126,44 @@ export function seedDemoData(): Proposal[] {
     new Date(now.getTime() - 1000 * 60 * 60 * 24 * 2)
   );
 
-  return [
-    {
-      id: p1Id,
-      title: "Enterprise CRM Modernization RFP",
+  const activities: TeamActivity[] = [
+    teamActivity("Pratyush Raul", "Customer - VWG", "customer", 0, 18, "Customer engagement and weekly sync"),
+    teamActivity("Pratyush Raul", "Capability Showcase", "capability", 5, 25, "Internal capability demo preparation"),
+    teamActivity("Pratyush Raul", "Customer Demo - Stark", "customer", 7, 25, "Customer demonstration and follow-up"),
+    teamActivity("Sumit Kumar", "Betnley - SAP Assessment", "assessment", 5, 39, "SAP assessment and recommendation"),
+    teamActivity("Sumit Kumar", "Idea - Code remediation", "idea", 0, 11, "Refactor and remediation initiative"),
+    teamActivity("Sumit Kumar", "Acme CRM Solution Design", "capability", 2, 12, "Solution design for CRM modernization"),
+    teamActivity("Sumit Kumar", "Globex Cloud Cost Review", "assessment", -3, 8, "Cost optimization and workload review"),
+    teamActivity("Sumit Kumar", "Wayne Financial Architecture Workshop", "idea", 8, 22, "Architecture workshop for digital banking"),
+    teamActivity("Sumit Kumar", "Internal Sprint Planning", "internal", -1, 4, "Sprint planning and backlog grooming"),
+    teamActivity("Sumit Kumar", "Stark Security Remediation", "customer", 12, 28, "Security remediation and validation"),
+    teamActivity("Sumit Kumar", "Customer Workshop - Acme", "customer", -7, 2, "Customer workshop and requirement gathering"),
+    teamActivity("Sumit Kumar", "BTP Integration Review", "assessment", 14, 30, "BTP integration feasibility review"),
+    teamActivity("Sumit Kumar", "Capability Demo - Fiori", "capability", 20, 35, "Fiori capability demonstration"),
+    teamActivity("Sumit Kumar", "Post-Sales Support Planning", "internal", 25, 40, "Post-sales support and handover planning"),
+    teamActivity("Aisha Patel", "Stark Security Review", "assessment", -5, 14, "Security posture review"),
+    teamActivity("Aisha Patel", "Wayne Financial Compliance Review", "assessment", 1, 15, "Compliance gap analysis"),
+    teamActivity("Carlos Rivera", "Globex Cloud Migration", "customer", 10, 45, "Cloud managed services delivery"),
+    teamActivity("Carlos Rivera", "Globex Migration Kickoff", "customer", 3, 20, "Migration kickoff and stakeholder alignment"),
+    teamActivity("Lisa Chen", "Wayne Financial POC", "idea", 15, 40, "Digital banking proof of concept"),
+    teamActivity("Lisa Chen", "Digital Banking API Design", "idea", 5, 18, "API design for open banking platform"),
+  ];
+
+  return {
+    proposals: [
+      {
+        id: p1Id,
+        title: "Enterprise CRM Modernization RFP",
       clientName: "Acme Corporation",
       description:
         "Modernize customer relationship management platform with AI-driven insights and omnichannel support.",
       status: "under_review",
       workflowStage: "proposal_review",
       currentCycleId: p1Cycle.id,
+      technology: "SAP CX",
+      sparcOwner: "Jane Doe",
+      gtmOwner: "Mark Liu",
+      proposalRegion: "NA",
       dueDate: new Date(now.getTime() + 1000 * 60 * 60 * 24 * 14),
       createdAt: new Date(now.getTime() - 1000 * 60 * 60 * 24 * 5),
       updatedAt: new Date(now.getTime() - 1000 * 60 * 60 * 2),
@@ -164,6 +211,10 @@ export function seedDemoData(): Proposal[] {
       description: "Managed cloud services for production workloads across AWS and Azure with 24/7 support.",
       status: "submitted",
       workflowStage: "proposal_review",
+      technology: "BTP / AWS",
+      sparcOwner: "Carlos Rivera",
+      gtmOwner: "Priya Nair",
+      proposalRegion: "EMEA",
       dueDate: new Date(now.getTime() + 1000 * 60 * 60 * 24 * 21),
       createdAt: new Date(now.getTime() - 1000 * 60 * 60 * 24 * 3),
       updatedAt: new Date(now.getTime() - 1000 * 60 * 60 * 24 * 1),
@@ -187,6 +238,10 @@ export function seedDemoData(): Proposal[] {
       description: "Comprehensive security posture assessment including penetration testing and compliance audit.",
       status: "approved",
       workflowStage: "approved",
+      technology: "SAP GRC",
+      sparcOwner: "Aisha Patel",
+      gtmOwner: "Tom Nguyen",
+      proposalRegion: "APJ",
       dueDate: new Date(now.getTime() - 1000 * 60 * 60 * 24 * 2),
       createdAt: new Date(now.getTime() - 1000 * 60 * 60 * 24 * 10),
       updatedAt: new Date(now.getTime() - 1000 * 60 * 60 * 6),
@@ -237,6 +292,10 @@ export function seedDemoData(): Proposal[] {
       description: "Next-generation digital banking platform with mobile-first experience and open banking APIs.",
       status: "draft",
       workflowStage: "intake",
+      technology: "SAP Fioneer",
+      sparcOwner: "Lisa Chen",
+      gtmOwner: "Ahmed Hassan",
+      proposalRegion: "MEA",
       dueDate: new Date(now.getTime() + 1000 * 60 * 60 * 24 * 30),
       createdAt: new Date(now.getTime() - 1000 * 60 * 60 * 12),
       updatedAt: new Date(now.getTime() - 1000 * 60 * 60 * 6),
@@ -246,5 +305,7 @@ export function seedDemoData(): Proposal[] {
       workflowCycles: [],
       workflowEvents: [],
     },
-  ];
+    ],
+    teamActivities: activities,
+  };
 }
