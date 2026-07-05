@@ -1,0 +1,254 @@
+import {
+  getTeamActivities as getTeamActivitiesFromDb,
+  addTeamActivity as addTeamActivityToDb,
+  updateTeamActivity as updateTeamActivityToDb,
+  deleteTeamActivity as deleteTeamActivityToDb,
+} from "./db";
+import type { TeamActivity, TeamActivityCategory } from "./types";
+
+export const teamActivityCategoryLabels: Record<TeamActivityCategory, string> = {
+  customer: "Customer",
+  capability: "Capability",
+  assessment: "Assessment",
+  idea: "Idea",
+  internal: "Internal",
+  other: "Other",
+};
+
+export { getTeamActivitiesFromDb as getTeamActivities };
+
+export function addTeamActivity(input: Omit<TeamActivity, "id">): Promise<TeamActivity> {
+  return addTeamActivityToDb(input);
+}
+
+export function updateTeamActivity(
+  id: string,
+  changes: Partial<Omit<TeamActivity, "id">>
+): Promise<TeamActivity | undefined> {
+  return updateTeamActivityToDb(id, changes);
+}
+
+export function deleteTeamActivity(id: string): Promise<void> {
+  return deleteTeamActivityToDb(id);
+}
+
+export interface TimelineWeek {
+  key: string;
+  weekIndex: number;
+  monthKey: string;
+  monthLabel: string;
+  start: Date;
+  end: Date;
+}
+
+export interface TimelineMonth {
+  key: string;
+  label: string;
+  weeks: TimelineWeek[];
+}
+
+export interface MemberActivityRow {
+  memberName: string;
+  activities: TeamActivity[];
+}
+
+/**
+ * Return the first Monday on or before the given date.
+ */
+function startOfWeek(date: Date): Date {
+  const d = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+  const day = d.getDay(); // 0 = Sunday, 1 = Monday, ...
+  const diff = day === 0 ? 6 : day - 1;
+  d.setDate(d.getDate() - diff);
+  d.setHours(0, 0, 0, 0);
+  return d;
+}
+
+function addDays(date: Date, days: number): Date {
+  const result = new Date(date);
+  result.setDate(result.getDate() + days);
+  return result;
+}
+
+function startOfIsoWeek(date: Date): Date {
+  const d = startOfWeek(date);
+  d.setHours(0, 0, 0, 0);
+  return d;
+}
+
+function weekMonthKey(weekStart: Date): string {
+  // ISO convention: a week belongs to the month/year of its Thursday.
+  const thursday = addDays(weekStart, 3);
+  return `${thursday.getFullYear()}-${String(thursday.getMonth() + 1).padStart(2, "0")}`;
+}
+
+function weekMonthLabel(weekStart: Date): string {
+  const thursday = addDays(weekStart, 3);
+  return thursday.toLocaleString("en-US", { month: "short", year: "2-digit" });
+}
+
+/**
+ * Generate a continuous sequence of ISO-style weeks (Mon-Sun) covering the
+ * requested months, grouped by the month each week belongs to (ISO Thursday
+ * rule). This avoids duplicate weeks at month boundaries.
+ */
+export function generateTimelineMonths(startMonth: Date, count: number): TimelineMonth[] {
+  const rangeStart = startOfIsoWeek(startMonth);
+  const rangeEnd = new Date(startMonth.getFullYear(), startMonth.getMonth() + count, 0, 23, 59, 59, 999);
+
+  // Compute the exact set of requested month keys so partial trailing weeks do
+  // not create an unexpected extra month header.
+  const allowedMonthKeys = new Set<string>();
+  for (let i = 0; i < count; i++) {
+    const d = new Date(startMonth.getFullYear(), startMonth.getMonth() + i, 1);
+    allowedMonthKeys.add(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`);
+  }
+
+  const weeks: TimelineWeek[] = [];
+  let cursor = new Date(rangeStart);
+  while (cursor <= rangeEnd) {
+    const weekStart = new Date(cursor);
+    const weekEnd = addDays(weekStart, 6);
+    weekEnd.setHours(23, 59, 59, 999);
+    const monthKey = weekMonthKey(weekStart);
+
+    if (allowedMonthKeys.has(monthKey)) {
+      weeks.push({
+        key: `${weekStart.getFullYear()}-${String(weekStart.getMonth() + 1).padStart(2, "0")}-${String(weekStart.getDate()).padStart(2, "0")}`,
+        weekIndex: 0, // computed per-month below
+        monthKey,
+        monthLabel: weekMonthLabel(weekStart),
+        start: weekStart,
+        end: weekEnd,
+      });
+    }
+
+    cursor = addDays(cursor, 7);
+  }
+
+  // Group consecutive weeks by month and assign W1..Wn indices within each month.
+  const groups = new Map<string, TimelineWeek[]>();
+  for (const week of weeks) {
+    const list = groups.get(week.monthKey) ?? [];
+    list.push(week);
+    groups.set(week.monthKey, list);
+  }
+
+  const months: TimelineMonth[] = [];
+  for (const [monthKey, monthWeeks] of groups) {
+    const firstThursday = addDays(monthWeeks[0].start, 3);
+    months.push({
+      key: monthKey,
+      label: firstThursday.toLocaleString("en-US", { month: "short", year: "2-digit" }),
+      weeks: monthWeeks.map((w, idx) => ({ ...w, weekIndex: idx + 1 })),
+    });
+  }
+
+  return months;
+}
+
+export function groupActivitiesByMember(activities: TeamActivity[]): MemberActivityRow[] {
+  const map = new Map<string, TeamActivity[]>();
+  for (const activity of activities) {
+    const list = map.get(activity.memberName) ?? [];
+    list.push(activity);
+    map.set(activity.memberName, list);
+  }
+  return Array.from(map.entries())
+    .map(([memberName, activities]) => ({
+      memberName,
+      activities: activities.sort((a, b) => a.startDate.getTime() - b.startDate.getTime()),
+    }))
+    .sort((a, b) => a.memberName.localeCompare(b.memberName));
+}
+
+export function getCategoryClasses(category: TeamActivityCategory): {
+  bar: string;
+  badge: string;
+  text: string;
+} {
+  switch (category) {
+    case "customer":
+      return {
+        bar: "bg-amber-200 text-amber-950 border-amber-300 dark:bg-amber-900/60 dark:text-amber-100 dark:border-amber-700",
+        badge: "bg-amber-100 text-amber-800 dark:bg-amber-900 dark:text-amber-200",
+        text: "text-amber-800 dark:text-amber-200",
+      };
+    case "capability":
+      return {
+        bar: "bg-blue-200 text-blue-950 border-blue-300 dark:bg-blue-900/60 dark:text-blue-100 dark:border-blue-700",
+        badge: "bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200",
+        text: "text-blue-800 dark:text-blue-200",
+      };
+    case "assessment":
+      return {
+        bar: "bg-green-200 text-green-950 border-green-300 dark:bg-green-900/60 dark:text-green-100 dark:border-green-700",
+        badge: "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200",
+        text: "text-green-800 dark:text-green-200",
+      };
+    case "idea":
+      return {
+        bar: "bg-teal-200 text-teal-950 border-teal-300 dark:bg-teal-900/60 dark:text-teal-100 dark:border-teal-700",
+        badge: "bg-teal-100 text-teal-800 dark:bg-teal-900 dark:text-teal-200",
+        text: "text-teal-800 dark:text-teal-200",
+      };
+    case "internal":
+      return {
+        bar: "bg-purple-200 text-purple-950 border-purple-300 dark:bg-purple-900/60 dark:text-purple-100 dark:border-purple-700",
+        badge: "bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200",
+        text: "text-purple-800 dark:text-purple-200",
+      };
+    case "other":
+    default:
+      return {
+        bar: "bg-slate-200 text-slate-900 border-slate-300 dark:bg-slate-800 dark:text-slate-100 dark:border-slate-600",
+        badge: "bg-slate-100 text-slate-800 dark:bg-slate-800 dark:text-slate-200",
+        text: "text-slate-800 dark:text-slate-200",
+      };
+  }
+}
+
+/**
+ * Compute the 0-based column index where an activity starts and ends within a
+ * flat list of weeks. Returns null if the activity does not overlap the range.
+ */
+export function getActivitySpan(
+  activity: TeamActivity,
+  weeks: TimelineWeek[]
+): { startCol: number; endCol: number } | null {
+  const aStart = new Date(activity.startDate).setHours(0, 0, 0, 0);
+  const aEnd = new Date(activity.endDate).setHours(23, 59, 59, 999);
+
+  let startCol = -1;
+  let endCol = -1;
+
+  for (let i = 0; i < weeks.length; i++) {
+    const wStart = weeks[i].start.getTime();
+    const wEnd = weeks[i].end.getTime();
+
+    const overlaps = aStart <= wEnd && aEnd >= wStart;
+    if (overlaps) {
+      if (startCol === -1) startCol = i;
+      endCol = i;
+    }
+  }
+
+  if (startCol === -1) return null;
+  return { startCol, endCol };
+}
+
+/**
+ * Format a date range for display in tooltips.
+ */
+export function formatDateRange(start: Date, end: Date): string {
+  const opts: Intl.DateTimeFormatOptions = { month: "short", day: "numeric" };
+  return `${start.toLocaleDateString("en-US", opts)} – ${end.toLocaleDateString("en-US", opts)}`;
+}
+
+/**
+ * Return the first day of the current month.
+ */
+export function getCurrentMonthStart(): Date {
+  const now = new Date();
+  return new Date(now.getFullYear(), now.getMonth(), 1);
+}

@@ -3,17 +3,17 @@
 import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
-import { getProposal, updateProposal, getDeepReview } from "@/lib/db";
-import type { Proposal, ProposalStatus } from "@/lib/types";
+import { getProposal, getDeepReview } from "@/lib/db";
+import type { Proposal } from "@/lib/types";
 import type { DeepReview } from "@/lib/deep-review/types";
 import { formatDate, formatDateTime, formatBytes, cn } from "@/lib/utils";
 import { statusLabels, categoryLabels } from "@/lib/types";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Select } from "@/components/ui/select";
 import { ArrowLeft, FileText, MessageSquare, Eye, Route, Upload, Sparkles } from "lucide-react";
 import { stageLabels } from "@/lib/workflow-config";
+import { useProposalBackTarget } from "@/lib/use-proposal-back-target";
 
 export default function ProposalDetailPage() {
   const params = useParams();
@@ -22,6 +22,7 @@ export default function ProposalDetailPage() {
   const [proposal, setProposal] = useState<Proposal | null>(null);
   const [deepReview, setDeepReview] = useState<DeepReview | null>(null);
   const [loading, setLoading] = useState(true);
+  const backTarget = useProposalBackTarget(id);
 
   useEffect(() => {
     if (!id) return;
@@ -31,12 +32,6 @@ export default function ProposalDetailPage() {
     });
     getDeepReview(id).then((dr) => setDeepReview(dr || null));
   }, [id]);
-
-  const changeStatus = async (status: ProposalStatus) => {
-    if (!proposal) return;
-    const updated = await updateProposal(proposal.id, { status });
-    if (updated) setProposal(updated);
-  };
 
   if (loading) {
     return (
@@ -62,8 +57,8 @@ export default function ProposalDetailPage() {
     <div className="space-y-6">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex items-center gap-3">
-          <Button variant="outline" size="sm" onClick={() => router.push("/proposals")}>
-            <ArrowLeft size={16} className="mr-1" /> Back
+          <Button variant="outline" size="sm" onClick={() => router.push(backTarget.href)}>
+            <ArrowLeft size={16} className="mr-1" /> {backTarget.label}
           </Button>
           <div>
             <h1 className="text-2xl font-bold text-text-primary sm:text-3xl">{proposal.title}</h1>
@@ -71,17 +66,10 @@ export default function ProposalDetailPage() {
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-3">
-          <Select
-            value={proposal.status}
-            onChange={(e) => changeStatus(e.target.value as ProposalStatus)}
-            className="w-44"
-          >
-            {(["draft", "submitted", "under_review", "approved", "rejected"] as ProposalStatus[]).map((s) => (
-              <option key={s} value={s}>
-                {statusLabels[s]}
-              </option>
-            ))}
-          </Select>
+          {/* Status is derived from the workflow stage — change it via Roadmap actions. */}
+          <Badge variant={proposal.status} className="px-3 py-1.5 text-sm">
+            {statusLabels[proposal.status]}
+          </Badge>
           <Link href={`/proposals/${proposal.id}/roadmap`}>
             <Button variant="outline">
               <Route size={18} className="mr-2" /> Roadmap

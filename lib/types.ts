@@ -5,7 +5,17 @@ export type ProposalStatus =
   | "approved"
   | "rejected";
 
-export type DocumentCategory = "rfp" | "transcript" | "customer_doc" | "final_proposal";
+export type ProposalDocumentCategory = "rfp" | "transcript" | "customer_doc" | "final_proposal";
+export type LeadDocumentCategory =
+  | "lead_mail"
+  | "lead_mom"
+  | "lead_discussion"
+  | "lead_pre_qual_form"
+  | "lead_due_diligence"
+  | "lead_proposal"
+  | "lead_customer_doc"
+  | "lead_final_deck";
+export type DocumentCategory = ProposalDocumentCategory | LeadDocumentCategory;
 
 export type ReviewCycleType = "proposal" | "delivery" | "customer";
 
@@ -145,6 +155,65 @@ export const categoryLabels: Record<DocumentCategory, string> = {
   transcript: "Meeting Transcript",
   customer_doc: "Customer Document",
   final_proposal: "Customer Final Proposal",
+  lead_mail: "Mail",
+  lead_mom: "Minutes of Meeting",
+  lead_discussion: "Discussion Notes",
+  lead_pre_qual_form: "Pre-Qualification Form",
+  lead_due_diligence: "Due Diligence Document",
+  lead_proposal: "Proposal Document",
+  lead_customer_doc: "Customer Document (RFP / Requirement Summary)",
+  lead_final_deck: "Final Pitch Deck",
+};
+
+// ── Lead Management ────────────────────────────────────────────────────────
+
+export type LeadStatus = "new" | "qualified" | "proposal" | "converted" | "on_hold" | "dropped";
+
+export interface Lead {
+  id: string;
+  leadName: string;
+  kytesId: string;
+  receivedVia: "email" | "meeting" | "other";
+  hgStatus: string;
+  date?: Date;
+  gtmName: string;
+  vertical: string;
+  leadType: string;
+  requirementSummary: string;
+  /** Customer / client name — carried over to the linked proposal at Event 5. */
+  clientName: string;
+  /** Optional Proposal Basic Info fields captured early so Event 5 doesn't re-ask for them. */
+  sparcMentor?: string;
+  proposalReviewer?: string;
+  proposalRegion?: string;
+  documents: LeadDocument[];
+  status: LeadStatus;
+  /** The next event the user can fill (1-5). After Event 1 is saved this becomes 2, etc. */
+  currentEvent: number;
+  /** Flexible per-event data (event2, event3, event4). */
+  eventData?: Record<string, unknown>;
+  /** Proposal created for Event 5 (Proposal Review - SPARC), once linked. */
+  proposalId?: string;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface LeadDocument {
+  category: LeadDocumentCategory;
+  name: string;
+  size: number;
+  mimeType: string;
+  content?: string;
+  extractedText?: string;
+}
+
+export const leadStatusLabels: Record<LeadStatus, string> = {
+  new: "New",
+  qualified: "Qualified",
+  proposal: "Proposal",
+  converted: "Converted",
+  on_hold: "On Hold",
+  dropped: "Dropped",
 };
 
 // ── Team Activity Dashboard ────────────────────────────────────────────────

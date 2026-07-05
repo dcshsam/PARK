@@ -9,6 +9,8 @@ import { Input } from "@/components/ui/input";
 import { Download, Trash2, Database, Shield, Link as LinkIcon, Users, Palette } from "lucide-react";
 import { LlmSettings } from "@/components/llm-settings";
 import { WorkspaceSettings } from "@/components/workspace-settings";
+import { LeadSettings } from "@/components/lead-settings";
+import { TeamSettings } from "@/components/team-settings";
 import { ThemeMenu } from "@/components/theme-toggle";
 import { RequireAccess } from "@/components/require-access";
 
@@ -144,7 +146,15 @@ function SettingsContent() {
         </div>
 
         <div className="lg:col-span-2">
+          <LeadSettings />
+        </div>
+
+        <div className="lg:col-span-2">
           <WorkspaceSettings />
+        </div>
+
+        <div className="lg:col-span-2">
+          <TeamSettings />
         </div>
 
         <Card>

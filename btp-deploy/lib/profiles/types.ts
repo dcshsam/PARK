@@ -36,6 +36,9 @@ export type Action =
   | "create_proposal"
   | "edit_proposal"
   | "delete_proposal"
+  | "create_lead"
+  | "edit_lead"
+  | "delete_lead"
   | "run_review"
   | "workflow_action"
   | "view";
@@ -48,11 +51,24 @@ const PERMISSIONS: Record<Role, Action[]> = {
     "create_proposal",
     "edit_proposal",
     "delete_proposal",
+    "create_lead",
+    "edit_lead",
+    "delete_lead",
     "run_review",
     "workflow_action",
     "view",
   ],
-  sparc_owner: ["create_proposal", "edit_proposal", "delete_proposal", "run_review", "workflow_action", "view"],
+  sparc_owner: [
+    "create_proposal",
+    "edit_proposal",
+    "delete_proposal",
+    "create_lead",
+    "edit_lead",
+    "delete_lead",
+    "run_review",
+    "workflow_action",
+    "view",
+  ],
   reviewer: ["run_review", "workflow_action", "view"],
   guest: ["view"],
 };

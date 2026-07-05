@@ -28,6 +28,14 @@ const categoryVariant: Record<DocumentCategory, BadgeProps["variant"]> = {
   transcript: "secondary",
   customer_doc: "success",
   final_proposal: "warning",
+  lead_mail: "info",
+  lead_mom: "warning",
+  lead_discussion: "danger",
+  lead_pre_qual_form: "info",
+  lead_due_diligence: "primary",
+  lead_proposal: "success",
+  lead_customer_doc: "success",
+  lead_final_deck: "warning",
 };
 
 const Badge = React.forwardRef<HTMLSpanElement, BadgeProps>(
@@ -36,7 +44,7 @@ const Badge = React.forwardRef<HTMLSpanElement, BadgeProps>(
     if (["draft", "submitted", "under_review", "approved", "rejected"].includes(variant as string)) {
       resolved = statusVariant[variant as ProposalStatus]!;
     }
-    if (["rfp", "transcript", "customer_doc", "final_proposal"].includes(variant as string)) {
+    if (["rfp", "transcript", "customer_doc", "final_proposal", "lead_mail", "lead_mom", "lead_discussion", "lead_pre_qual_form", "lead_due_diligence", "lead_proposal", "lead_customer_doc", "lead_final_deck"].includes(variant as string)) {
       resolved = categoryVariant[variant as DocumentCategory]!;
     }
 

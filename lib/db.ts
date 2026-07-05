@@ -8,11 +8,12 @@ import type {
   WorkflowCycle,
   WorkflowEvent,
   TeamActivity,
+  Lead,
 } from "./types";
 import { seedDemoData } from "./demo-data";
 import type { DeepReview } from "./deep-review/types";
 import { BUILTIN_RULE_DEFAULTS, type DeepRule } from "./deep-review/builtin-rules";
-import type { Profile } from "./profiles/types";
+import { getActiveProfileId, type Profile } from "./profiles/types";
 
 type ProposalRecord = Omit<
   Proposal,
@@ -29,6 +30,7 @@ class ProposalDatabase extends Dexie {
   deepRules!: EntityTable<DeepRule, "id">;
   profiles!: EntityTable<Profile, "id">;
   teamActivities!: EntityTable<TeamActivity, "id">;
+  leads!: EntityTable<Lead, "id">;
 
   constructor() {
     super("ProposalReviewDB");
@@ -63,6 +65,10 @@ class ProposalDatabase extends Dexie {
     this.version(9).stores({
       teamActivities: "++id, memberName, category, [memberName+startDate]",
     });
+    // v10: lead management (SPARC lead intake roadmap).
+    this.version(10).stores({
+      leads: "++id, kytesId, status, createdAt, updatedAt",
+    });
   }
 }
 
@@ -78,7 +84,10 @@ function getDb(): ProposalDatabase {
   return dbInstance;
 }
 
-async function hydrateProposal(record: ProposalRecord): Promise<Proposal> {
+async function hydrateProposal(
+  record: ProposalRecord,
+  opts: { lightDocuments?: boolean } = {}
+): Promise<Proposal> {
   const db = getDb();
   const documents = await db.documents.where("proposalId").equals(record.id).sortBy("uploadedAt");
   const comments = await db.comments.where("proposalId").equals(record.id).sortBy("createdAt");
@@ -94,6 +103,9 @@ async function hydrateProposal(record: ProposalRecord): Promise<Proposal> {
     ...record,
     documents: documents.map((d) => ({
       ...d,
+      // List views only need document metadata — dropping the base64 payload
+      // and extracted text keeps multi-proposal pages fast.
+      ...(opts.lightDocuments ? { content: undefined, extractedText: undefined } : {}),
       uploadedAt: new Date(d.uploadedAt),
     })),
     comments: comments.map((c) => ({
@@ -113,10 +125,24 @@ async function hydrateProposal(record: ProposalRecord): Promise<Proposal> {
   } as Proposal;
 }
 
-export async function seedIfEmpty(): Promise<void> {
+// Memoized so the (fairly expensive) empty-check + seed runs once per session,
+// not on every single db read.
+let seedIfEmptyPromise: Promise<void> | null = null;
+
+export function seedIfEmpty(): Promise<void> {
+  if (!seedIfEmptyPromise) {
+    seedIfEmptyPromise = doSeedIfEmpty().catch((err) => {
+      seedIfEmptyPromise = null; // allow a retry on the next call
+      throw err;
+    });
+  }
+  return seedIfEmptyPromise;
+}
+
+async function doSeedIfEmpty(): Promise<void> {
   const db = getDb();
   const proposalCount = await db.proposals.count();
-  const { proposals, teamActivities } = seedDemoData();
+  const { proposals, teamActivities, leads } = seedDemoData();
 
   if (proposalCount === 0) {
     for (const proposal of proposals) {
@@ -135,13 +161,24 @@ export async function seedIfEmpty(): Promise<void> {
   if (activityCount === 0 && teamActivities?.length) {
     await db.teamActivities.bulkAdd(teamActivities as TeamActivity[]);
   }
+
+  // Seed sample Proposal Master leads independently for the same reason.
+  const leadCount = await db.leads.count();
+  if (leadCount === 0 && leads?.length) {
+    await db.leads.bulkAdd(leads);
+  }
 }
 
+/**
+ * All proposals with document *metadata* only (no base64 content / extracted
+ * text) — used by list, dashboard and analytics views. Use getProposal(id)
+ * when the full document payload is needed.
+ */
 export async function getProposals(): Promise<Proposal[]> {
   const db = getDb();
   await seedIfEmpty();
   const records = await db.proposals.orderBy("updatedAt").reverse().toArray();
-  return Promise.all(records.map(hydrateProposal));
+  return Promise.all(records.map((r) => hydrateProposal(r, { lightDocuments: true })));
 }
 
 export async function getProposal(id: string): Promise<Proposal | undefined> {
@@ -526,6 +563,15 @@ export async function getProfiles(): Promise<Profile[]> {
     .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
 }
 
+/** The profile currently selected in the profile switcher (persisted in localStorage). */
+export async function getActiveProfile(): Promise<Profile | undefined> {
+  const db = getDb();
+  await seedDefaultProfiles();
+  const id = getActiveProfileId();
+  if (!id) return undefined;
+  return db.profiles.get(id);
+}
+
 export async function addProfile(input: Omit<Profile, "id" | "createdAt">): Promise<Profile> {
   const db = getDb();
   const profile: Profile = { ...input, id: crypto.randomUUID(), createdAt: new Date() };
@@ -547,6 +593,95 @@ export async function deleteProfile(id: string): Promise<void> {
 }
 
 /** Map of proposalId → latest saved deep review, for list/dashboard/analytics views. */
+// ── Leads ───────────────────────────────────────────────────────────────────
+
+export async function getLeads(): Promise<Lead[]> {
+  const db = getDb();
+  await seedIfEmpty();
+  const records = await db.leads.orderBy("updatedAt").reverse().toArray();
+  return records.map((record) => ({
+    ...record,
+    currentEvent: record.currentEvent ?? 1,
+    date: record.date ? new Date(record.date) : undefined,
+    createdAt: new Date(record.createdAt),
+    updatedAt: new Date(record.updatedAt),
+  }));
+}
+
+export async function getLead(id: string): Promise<Lead | undefined> {
+  const db = getDb();
+  const record = await db.leads.get(id);
+  if (!record) return undefined;
+  return {
+    ...record,
+    currentEvent: record.currentEvent ?? 1,
+    date: record.date ? new Date(record.date) : undefined,
+    createdAt: new Date(record.createdAt),
+    updatedAt: new Date(record.updatedAt),
+  };
+}
+
+/**
+ * Add the bundled sample leads to the workspace on demand, skipping any whose
+ * Kytes ID already exists. Returns how many were added.
+ */
+export async function seedSampleLeads(): Promise<number> {
+  const db = getDb();
+  const { leads } = seedDemoData();
+  const existing = new Set((await db.leads.toArray()).map((l) => l.kytesId));
+  const toAdd = leads.filter((l) => !existing.has(l.kytesId));
+  if (toAdd.length > 0) {
+    await db.leads.bulkAdd(toAdd);
+  }
+  return toAdd.length;
+}
+
+export async function getLeadByProposalId(proposalId: string): Promise<Lead | undefined> {
+  const db = getDb();
+  const record = await db.leads.filter((lead) => lead.proposalId === proposalId).first();
+  if (!record) return undefined;
+  return {
+    ...record,
+    currentEvent: record.currentEvent ?? 1,
+    date: record.date ? new Date(record.date) : undefined,
+    createdAt: new Date(record.createdAt),
+    updatedAt: new Date(record.updatedAt),
+  };
+}
+
+export async function addLead(
+  input: Omit<Lead, "id" | "createdAt" | "updatedAt" | "currentEvent"> & {
+    currentEvent?: number;
+  }
+): Promise<Lead> {
+  const db = getDb();
+  const now = new Date();
+  const lead: Lead = {
+    ...input,
+    status: input.status ?? "new",
+    currentEvent: input.currentEvent ?? 2,
+    id: crypto.randomUUID(),
+    createdAt: now,
+    updatedAt: now,
+  };
+  await db.leads.add(lead);
+  return lead;
+}
+
+export async function updateLead(
+  id: string,
+  changes: Partial<Omit<Lead, "id" | "createdAt" | "updatedAt">>
+): Promise<Lead | undefined> {
+  const db = getDb();
+  await db.leads.update(id, { ...changes, updatedAt: new Date() });
+  return getLead(id);
+}
+
+export async function deleteLead(id: string): Promise<void> {
+  const db = getDb();
+  await db.leads.delete(id);
+}
+
 export async function getTeamActivities(): Promise<TeamActivity[]> {
   const db = getDb();
   await seedIfEmpty();
@@ -609,6 +744,7 @@ export async function exportAll(): Promise<Record<string, unknown[]>> {
   const db = getDb();
   return {
     proposals: await db.proposals.toArray(),
+    leads: await db.leads.toArray(),
     documents: await db.documents.toArray(),
     comments: await db.comments.toArray(),
     workflowCycles: await db.workflowCycles.toArray(),
@@ -622,6 +758,7 @@ export async function clearAll(): Promise<void> {
   const db = getDb();
   await db.transaction("rw", [
     db.proposals,
+    db.leads,
     db.documents,
     db.comments,
     db.workflowCycles,
@@ -637,6 +774,7 @@ export async function clearAll(): Promise<void> {
     await db.comments.clear();
     await db.documents.clear();
     await db.teamActivities.clear();
+    await db.leads.clear();
     await db.proposals.clear();
   });
 }

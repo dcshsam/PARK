@@ -3,10 +3,10 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { motion } from "framer-motion";
-import { getProposals, getDeepReviewMap } from "@/lib/db";
-import type { Proposal, ProposalStatus, TeamActivity, TeamActivityCategory } from "@/lib/types";
-import type { DeepReview } from "@/lib/deep-review/types";
-import { statusLabels } from "@/lib/types";
+import { getLeads } from "@/lib/db";
+import type { Lead, LeadStatus, TeamActivity, TeamActivityCategory } from "@/lib/types";
+import { leadStatusLabels } from "@/lib/types";
+import { LEAD_EVENT_SHORT, LEAD_STATUS_COLORS, LEAD_STATUS_BADGE } from "@/lib/lead-events";
 import { getTeamActivities, teamActivityCategoryLabels } from "@/lib/team-activity";
 import { getTeamMembers, seedTeamMembers } from "@/lib/team-members";
 import type { TeamMember } from "@/lib/team-members";
@@ -14,15 +14,11 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { formatDate, cn } from "@/lib/utils";
-import { getCycleSummary, formatDurationShort } from "@/lib/workflow-utils";
-import { ProposalActionModal } from "@/components/proposal-action-modal";
 import {
-  FileText,
   Clock,
   CheckCircle2,
   Plus,
   ArrowRight,
-  RotateCcw,
   TrendingUp,
   Activity,
   BarChart3,
@@ -30,8 +26,6 @@ import {
   AlertCircle,
   Users,
   CalendarDays,
-  XCircle,
-  ArrowUpRight,
 } from "lucide-react";
 import {
   ResponsiveContainer,
@@ -46,14 +40,6 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-
-const STATUS_COLORS: Record<ProposalStatus, string> = {
-  draft: "#9ca3af",
-  submitted: "#3b82f6",
-  under_review: "#eab308",
-  approved: "#22c55e",
-  rejected: "#ef4444",
-};
 
 const ACTIVITY_CATEGORY_COLORS: Record<TeamActivityCategory, string> = {
   customer: "#f59e0b",
@@ -79,7 +65,7 @@ function greeting() {
 }
 
 function Sparkline({ color = "#6366f1" }: { color?: string }) {
-  const data = useMemo(() => Array.from({ length: 8 }, (_, i) => ({ i, v: 10 + Math.random() * 40 })), []);
+  const [data] = useState(() => Array.from({ length: 8 }, (_, i) => ({ i, v: 15 + ((i * 7) % 31) })));
   return (
     <div className="h-10 w-24 opacity-80">
       <ResponsiveContainer width="100%" height="100%">
@@ -127,56 +113,58 @@ function overlapsRange(start: Date, end: Date, rangeStart: Date, rangeEnd: Date)
 }
 
 export default function DashboardPage() {
-  const [proposals, setProposals] = useState<Proposal[]>([]);
-  const [reviews, setReviews] = useState<Map<string, DeepReview>>(new Map());
+  const [leads, setLeads] = useState<Lead[]>([]);
   const [teamMembers, setTeamMembers] = useState<TeamMember[]>([]);
   const [activities, setActivities] = useState<TeamActivity[]>([]);
   const [loading, setLoading] = useState(true);
-  const [selectedProposal, setSelectedProposal] = useState<Proposal | null>(null);
 
   useEffect(() => {
     seedTeamMembers();
-    getProposals().then((data) => {
-      setProposals(data);
+    Promise.resolve().then(() => setTeamMembers(getTeamMembers()));
+    getLeads().then((data) => {
+      setLeads(data);
       setLoading(false);
     });
-    getDeepReviewMap().then(setReviews);
-    setTeamMembers(getTeamMembers());
     getTeamActivities().then(setActivities);
   }, []);
 
-  const inRework = proposals.filter((p) => p.workflowStage?.endsWith("_rework")).length;
+  // ── Proposal Master pipeline (leads presented as proposals) ────────────────
+  const leadStats = useMemo(() => {
+    const total = leads.length;
+    const converted = leads.filter((l) => l.status === "converted").length;
+    const dropped = leads.filter((l) => l.status === "dropped").length;
+    const onHold = leads.filter((l) => l.status === "on_hold").length;
+    const active = total - converted - dropped;
+    const decided = converted + dropped;
+    const conversionRate = decided > 0 ? Math.round((converted / decided) * 100) : null;
+    return { total, active, converted, dropped, onHold, conversionRate };
+  }, [leads]);
 
-  const completedProposalCycles = proposals.flatMap((p) =>
-    p.workflowCycles
-      .filter((c) => c.cycleType === "proposal" && c.completedAt)
-      .map((c) => getCycleSummary(c, p.workflowEvents).durationMs)
+  const leadFunnelData = useMemo(
+    () =>
+      LEAD_EVENT_SHORT.map((label, i) => ({
+        name: `${i + 1}. ${label}`,
+        short: label,
+        value: leads.filter((l) => l.status !== "dropped" && (l.currentEvent ?? 1) === i + 1).length,
+      })),
+    [leads]
   );
-  const avgProposalCycleDuration =
-    completedProposalCycles.length > 0
-      ? completedProposalCycles.reduce((a, b) => a + b, 0) / completedProposalCycles.length
-      : 0;
 
-  const allCycles = proposals.flatMap((p) =>
-    p.workflowCycles.map((c) => getCycleSummary(c, p.workflowEvents).iterations)
-  );
-  const avgIterations = allCycles.length > 0 ? allCycles.reduce((a, b) => a + b, 0) / allCycles.length : 0;
-
-  const stats = {
-    total: proposals.length,
-    inProgress: proposals.filter((p) => ["draft", "submitted", "under_review"].includes(p.status)).length,
-    approved: proposals.filter((p) => p.status === "approved").length,
-    rejected: proposals.filter((p) => p.status === "rejected").length,
-  };
-
-  const statusData = useMemo(() => {
-    const order: ProposalStatus[] = ["draft", "submitted", "under_review", "approved", "rejected"];
+  const leadStatusData = useMemo(() => {
+    const order: LeadStatus[] = ["new", "qualified", "proposal", "converted", "on_hold", "dropped"];
     return order
-      .map((s) => ({ name: statusLabels[s], status: s, value: proposals.filter((p) => p.status === s).length }))
+      .map((s) => ({ name: leadStatusLabels[s], status: s, value: leads.filter((l) => l.status === s).length }))
       .filter((d) => d.value > 0);
-  }, [proposals]);
+  }, [leads]);
 
-  const recent = proposals.slice(0, 5);
+  const activeLeads = useMemo(
+    () =>
+      leads
+        .filter((l) => l.status !== "converted" && l.status !== "dropped")
+        .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())
+        .slice(0, 6),
+    [leads]
+  );
 
   // ── Team activity KPIs ─────────────────────────────────────────────────────
   const now = new Date();
@@ -242,10 +230,10 @@ export default function DashboardPage() {
               Here&apos;s what&apos;s happening across your proposal pipeline today.
             </p>
           </div>
-          <Link href="/proposals/new">
+          <Link href="/leads/new">
             <Button className="bg-white text-primary-700 hover:bg-primary-50">
               <Plus size={18} className="mr-2" />
-              New Review
+              New Proposal
             </Button>
           </Link>
         </div>
@@ -253,171 +241,72 @@ export default function DashboardPage() {
         <div className="absolute -bottom-10 -left-10 h-40 w-40 rounded-full bg-indigo-400/20 blur-2xl" />
       </motion.div>
 
-      {/* Stat cards */}
+      {/* Proposal Master pipeline — management view */}
       <motion.div
-        className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4"
+        className="space-y-4"
         initial={{ opacity: 0, y: 12 }}
         animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.5, delay: 0.1 }}
+        transition={{ duration: 0.5, delay: 0.15 }}
       >
-        {[
-          { icon: FileText, label: "Total Proposals", value: stats.total, color: "text-white", gradient: cardGradients[0] },
-          { icon: ArrowUpRight, label: "In Progress", value: stats.inProgress, color: "text-white", gradient: cardGradients[1] },
-          { icon: CheckCircle2, label: "Approved", value: stats.approved, color: "text-white", gradient: cardGradients[2] },
-          { icon: XCircle, label: "Rejected", value: stats.rejected, color: "text-white", gradient: cardGradients[3] },
-        ].map((stat, idx) => (
-          <StatCard key={stat.label} {...stat} index={idx} />
-        ))}
-      </motion.div>
+        <div>
+          <h2 className="text-lg font-semibold text-text-primary">Proposal Master pipeline</h2>
+          <p className="text-sm text-text-tertiary">Where every proposal sits in the 8-event journey, and who owns it.</p>
+        </div>
 
-      {/* Main content */}
-      <div className="grid gap-6 lg:grid-cols-3">
-        {/* Recent proposals */}
-        <motion.div
-          className="lg:col-span-2"
-          initial={{ opacity: 0, y: 12 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.5, delay: 0.2 }}
-        >
-          <Card className="h-full">
-            <CardHeader className="flex flex-row items-center justify-between">
-              <div>
-                <CardTitle className="flex items-center gap-2">
-                  <FileText size={20} className="text-primary-600" /> Recent proposals
-                </CardTitle>
-                <CardDescription>Latest reviews across your pipeline.</CardDescription>
-              </div>
-              <Link href="/proposals">
-                <Button variant="outline" size="sm">
-                  View all <ArrowRight size={16} className="ml-1" />
-                </Button>
-              </Link>
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          {[
+            { icon: Users, label: "Total Proposals", value: leadStats.total, color: "text-white", gradient: cardGradients[0] },
+            { icon: TrendingUp, label: "Active Pipeline", value: leadStats.active, color: "text-white", gradient: cardGradients[1] },
+            {
+              icon: CheckCircle2,
+              label: "Converted",
+              value: leadStats.conversionRate === null ? leadStats.converted : `${leadStats.converted} (${leadStats.conversionRate}%)`,
+              color: "text-white",
+              gradient: cardGradients[2],
+            },
+            { icon: AlertCircle, label: "On Hold / Dropped", value: leadStats.onHold + leadStats.dropped, color: "text-white", gradient: cardGradients[3] },
+          ].map((stat, idx) => (
+            <StatCard key={stat.label} {...stat} index={idx} />
+          ))}
+        </div>
+
+        <div className="grid gap-6 lg:grid-cols-3">
+          <Card className="lg:col-span-2">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <BarChart3 size={20} className="text-primary-600" /> Pipeline by event
+              </CardTitle>
+              <CardDescription>Active proposals at each stage of the 8-event journey.</CardDescription>
             </CardHeader>
             <CardContent>
               {loading ? (
-                <div className="space-y-3">
-                  {[...Array(4)].map((_, i) => (
-                    <div key={i} className="h-20 animate-pulse rounded-xl bg-surface-muted" />
-                  ))}
-                </div>
-              ) : recent.length === 0 ? (
-                <EmptyState message="No proposals yet. Create your first review." />
+                <div className="h-64 animate-pulse rounded-xl bg-surface-muted" />
+              ) : leads.length === 0 ? (
+                <EmptyState message="No proposals yet. Create your first proposal in Proposal Master." />
               ) : (
-                <div className="space-y-3">
-                  {recent.map((proposal) => (
-                    <button
-                      key={proposal.id}
-                      onClick={() => setSelectedProposal(proposal)}
-                      className="group w-full rounded-xl border border-border bg-surface-muted/30 p-4 text-left transition-all hover:border-primary-300 hover:bg-surface-muted/60 hover:shadow-sm"
-                    >
-                      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                        <div className="min-w-0 flex-1">
-                          <p className="truncate text-sm font-semibold text-text-primary group-hover:text-primary-600">
-                            {proposal.title}
-                          </p>
-                          <p className="mt-0.5 text-xs text-text-tertiary">{proposal.clientName}</p>
-                          <div className="mt-2 flex flex-wrap items-center gap-2">
-                            {proposal.sparcOwner && <MetaChip label="Owner" value={proposal.sparcOwner} />}
-                            {proposal.technology && <MetaChip label="Tech" value={proposal.technology} />}
-                            {proposal.gtmOwner && <MetaChip label="GTM" value={proposal.gtmOwner} />}
-                            {proposal.proposalRegion && <MetaChip label="Region" value={proposal.proposalRegion} />}
-                          </div>
-                        </div>
-                        <div className="flex shrink-0 items-center gap-3">
-                          {reviews.get(proposal.id) && (
-                            <span
-                              className={cn(
-                                "rounded-lg px-2 py-1 text-xs font-bold",
-                                reviews.get(proposal.id)!.overall_score >= 60
-                                  ? "bg-green-100 text-green-700"
-                                  : "bg-red-100 text-red-700"
-                              )}
-                            >
-                              {reviews.get(proposal.id)!.overall_score}/100
-                            </span>
-                          )}
-                          <span className="text-xs text-text-tertiary">
-                            {proposal.dueDate ? formatDate(proposal.dueDate) : "No due date"}
-                          </span>
-                          <Badge variant={proposal.status}>{statusLabels[proposal.status]}</Badge>
-                        </div>
-                      </div>
-                      <div className="mt-4">
-                        <StatusPipeline status={proposal.status} />
-                      </div>
-                    </button>
-                  ))}
+                <div className="h-64">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={leadFunnelData} margin={{ top: 8, right: 8, left: -24, bottom: 0 }}>
+                      <XAxis dataKey="short" tick={{ fontSize: 11 }} interval={0} angle={-20} textAnchor="end" height={50} />
+                      <YAxis allowDecimals={false} tick={{ fontSize: 11 }} />
+                      <Tooltip />
+                      <Bar dataKey="value" name="Leads" fill="#6366f1" radius={[6, 6, 0, 0]} />
+                    </BarChart>
+                  </ResponsiveContainer>
                 </div>
               )}
             </CardContent>
           </Card>
-        </motion.div>
 
-        {/* Right column */}
-        <motion.div
-          className="space-y-6"
-          initial={{ opacity: 0, y: 12 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.5, delay: 0.3 }}
-        >
-          {/* Workflow insights */}
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
-                <Activity size={20} className="text-primary-600" /> Workflow insights
+                <Activity size={20} className="text-primary-600" /> Proposal statuses
               </CardTitle>
-              <CardDescription>Pipeline health and review velocity.</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-5">
-              <div className="grid grid-cols-2 gap-3">
-                <InsightTile
-                  label="Avg. cycle"
-                  value={avgProposalCycleDuration > 0 ? formatDurationShort(avgProposalCycleDuration) : "—"}
-                  icon={TrendingUp}
-                  color="text-blue-600"
-                  bg="bg-blue-50 dark:bg-blue-500/10"
-                />
-                <InsightTile
-                  label="Avg. iterations"
-                  value={avgIterations > 0 ? avgIterations.toFixed(1) : "—"}
-                  icon={RotateCcw}
-                  color="text-amber-600"
-                  bg="bg-amber-50 dark:bg-amber-500/10"
-                />
-                <InsightTile
-                  label="In rework"
-                  value={String(inRework)}
-                  icon={AlertCircle}
-                  color="text-rose-600"
-                  bg="bg-rose-50 dark:bg-rose-500/10"
-                />
-                <InsightTile
-                  label="Reviewed"
-                  value={`${reviews.size}`}
-                  icon={CheckCircle2}
-                  color="text-emerald-600"
-                  bg="bg-emerald-50 dark:bg-emerald-500/10"
-                />
-              </div>
-              <div className="rounded-xl border border-border bg-surface-muted/30 p-4">
-                <p className="text-xs font-medium text-text-tertiary">Pipeline tip</p>
-                <p className="mt-1 text-sm text-text-secondary">
-                  Proposals in rework longer than 3 days usually need a stakeholder sync.
-                </p>
-              </div>
-            </CardContent>
-          </Card>
-
-          {/* Status distribution mini chart */}
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <BarChart3 size={20} className="text-primary-600" /> Status distribution
-              </CardTitle>
-              <CardDescription>Current proposal statuses.</CardDescription>
+              <CardDescription>Health of the overall funnel.</CardDescription>
             </CardHeader>
             <CardContent>
-              {statusData.length === 0 ? (
+              {leadStatusData.length === 0 ? (
                 <div className="flex h-40 items-center justify-center text-sm text-text-muted">No data yet</div>
               ) : (
                 <div className="flex flex-col items-center">
@@ -425,7 +314,7 @@ export default function DashboardPage() {
                     <ResponsiveContainer width="100%" height="100%">
                       <PieChart>
                         <Pie
-                          data={statusData}
+                          data={leadStatusData}
                           dataKey="value"
                           nameKey="name"
                           cx="50%"
@@ -434,8 +323,8 @@ export default function DashboardPage() {
                           innerRadius={45}
                           paddingAngle={3}
                         >
-                          {statusData.map((entry) => (
-                            <Cell key={entry.status} fill={STATUS_COLORS[entry.status]} />
+                          {leadStatusData.map((entry) => (
+                            <Cell key={entry.status} fill={LEAD_STATUS_COLORS[entry.status]} />
                           ))}
                         </Pie>
                         <Tooltip />
@@ -443,9 +332,9 @@ export default function DashboardPage() {
                     </ResponsiveContainer>
                   </div>
                   <div className="mt-2 flex flex-wrap justify-center gap-3">
-                    {statusData.map((d) => (
+                    {leadStatusData.map((d) => (
                       <div key={d.status} className="flex items-center gap-1.5 text-xs text-text-secondary">
-                        <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: STATUS_COLORS[d.status] }} />
+                        <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: LEAD_STATUS_COLORS[d.status] }} />
                         {d.name} ({d.value})
                       </div>
                     ))}
@@ -454,26 +343,86 @@ export default function DashboardPage() {
               )}
             </CardContent>
           </Card>
+        </div>
 
-          {/* Quick link to analytics */}
-          <Link href="/analytics">
-            <Card className="group cursor-pointer transition-colors hover:border-primary-300 hover:bg-surface-muted/30">
-              <CardContent className="flex items-center justify-between p-5">
-                <div className="flex items-center gap-3">
-                  <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary-100 text-primary-700">
-                    <Zap size={20} />
-                  </div>
-                  <div>
-                    <p className="text-sm font-semibold text-text-primary group-hover:text-primary-600">Deep analytics</p>
-                    <p className="text-xs text-text-tertiary">Filter, segment and visualize trends.</p>
-                  </div>
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Users size={20} className="text-primary-600" /> Active proposals — ownership
+            </CardTitle>
+            <CardDescription>Who is responsible for what, and where each proposal stands.</CardDescription>
+          </CardHeader>
+          <CardContent>
+            {activeLeads.length === 0 ? (
+              <EmptyState message="No active proposals right now." />
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-border text-left text-xs font-medium uppercase text-text-tertiary">
+                      <th className="pb-2 pr-4">Proposal</th>
+                      <th className="pb-2 pr-4">GTM</th>
+                      <th className="pb-2 pr-4">SPARC Mentor</th>
+                      <th className="pb-2 pr-4">Region</th>
+                      <th className="pb-2 pr-4">Vertical</th>
+                      <th className="pb-2 pr-4">Event</th>
+                      <th className="pb-2">Status</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {activeLeads.map((lead) => (
+                      <tr key={lead.id} className="border-b border-border/60 last:border-0 hover:bg-surface-muted/40">
+                        <td className="py-3 pr-4">
+                          <Link href={`/leads/${lead.id}`} className="group">
+                            <p className="font-medium text-text-primary group-hover:text-primary-600">{lead.leadName}</p>
+                            <p className="text-xs text-text-tertiary">{lead.clientName || "—"}</p>
+                          </Link>
+                        </td>
+                        <td className="py-3 pr-4 text-text-secondary">{lead.gtmName || "—"}</td>
+                        <td className="py-3 pr-4 text-text-secondary">{lead.sparcMentor || "—"}</td>
+                        <td className="py-3 pr-4 text-text-secondary">{lead.proposalRegion || "—"}</td>
+                        <td className="py-3 pr-4 text-text-secondary">{lead.vertical || "—"}</td>
+                        <td className="py-3 pr-4">
+                          <span className="whitespace-nowrap rounded-full bg-surface-muted px-2 py-0.5 text-xs font-medium text-text-secondary">
+                            {lead.currentEvent ?? 1}/8 · {LEAD_EVENT_SHORT[(lead.currentEvent ?? 1) - 1]}
+                          </span>
+                        </td>
+                        <td className="py-3">
+                          <Badge className={LEAD_STATUS_BADGE[lead.status]}>{leadStatusLabels[lead.status]}</Badge>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      </motion.div>
+
+      {/* Quick link to analytics */}
+      <motion.div
+        initial={{ opacity: 0, y: 12 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.5, delay: 0.25 }}
+      >
+        <Link href="/analytics">
+          <Card className="group cursor-pointer transition-colors hover:border-primary-300 hover:bg-surface-muted/30">
+            <CardContent className="flex items-center justify-between p-5">
+              <div className="flex items-center gap-3">
+                <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary-100 text-primary-700">
+                  <Zap size={20} />
                 </div>
-                <ArrowRight size={18} className="text-text-muted transition-transform group-hover:translate-x-1" />
-              </CardContent>
-            </Card>
-          </Link>
-        </motion.div>
-      </div>
+                <div>
+                  <p className="text-sm font-semibold text-text-primary group-hover:text-primary-600">Deep analytics</p>
+                  <p className="text-xs text-text-tertiary">Pipeline performance by GTM, region, vertical and more.</p>
+                </div>
+              </div>
+              <ArrowRight size={18} className="text-text-muted transition-transform group-hover:translate-x-1" />
+            </CardContent>
+          </Card>
+        </Link>
+      </motion.div>
 
       {/* Team activity insights */}
       <motion.div
@@ -637,11 +586,6 @@ export default function DashboardPage() {
         </Card>
       </motion.div>
 
-      <ProposalActionModal
-        proposal={selectedProposal}
-        open={!!selectedProposal}
-        onClose={() => setSelectedProposal(null)}
-      />
     </div>
   );
 }
@@ -655,7 +599,7 @@ function StatCard({
 }: {
   icon: React.ElementType;
   label: string;
-  value: number;
+  value: number | string;
   gradient: string;
   index: number;
 }) {
@@ -718,87 +662,3 @@ function EmptyState({ message }: { message: string }) {
   );
 }
 
-const PIPELINE_STAGES: { status: ProposalStatus; label: string }[] = [
-  { status: "draft", label: "Draft" },
-  { status: "submitted", label: "Submitted" },
-  { status: "under_review", label: "Under Review" },
-  { status: "approved", label: "Approved" },
-];
-
-function StatusPipeline({ status }: { status: ProposalStatus }) {
-  const isRejected = status === "rejected";
-  const currentIndex = PIPELINE_STAGES.findIndex((s) => s.status === status);
-  const progress = isRejected ? 100 : ((currentIndex + 1) / PIPELINE_STAGES.length) * 100;
-
-  return (
-    <div className="w-full">
-      <div className="relative flex items-center py-1">
-        {/* background track */}
-        <div className="absolute left-0 right-0 h-1.5 rounded-full bg-surface-muted" />
-        {/* filled progress */}
-        <motion.div
-          className={cn("absolute left-0 h-1.5 rounded-full", isRejected ? "bg-red-500" : "bg-primary-500")}
-          initial={{ width: 0 }}
-          animate={{ width: `${progress}%` }}
-          transition={{ duration: 0.6, ease: "easeOut" }}
-        />
-        {/* step dots */}
-        <div className="relative flex w-full justify-between">
-          {PIPELINE_STAGES.map((stage, i) => {
-            const isPast = isRejected ? i < PIPELINE_STAGES.length - 1 : i < currentIndex;
-            const isCurrent = !isRejected && i === currentIndex;
-            const isTerminal = isRejected && i === PIPELINE_STAGES.length - 1;
-
-            return (
-              <div key={stage.status} className="flex flex-col items-center gap-1.5">
-                <div
-                  className={cn(
-                    "flex h-6 w-6 items-center justify-center rounded-full border-2 text-[10px] font-bold transition-all",
-                    isCurrent
-                      ? "border-amber-500 bg-amber-500 text-white shadow-md shadow-amber-200"
-                      : isPast
-                      ? "border-primary-500 bg-primary-500 text-white"
-                      : isTerminal
-                      ? "border-red-500 bg-red-500 text-white"
-                      : "border-border-strong bg-surface text-text-muted"
-                  )}
-                >
-                  {isPast ? <CheckCircle2 size={12} /> : isTerminal ? "✕" : i + 1}
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      </div>
-      {/* labels */}
-      <div className="mt-1 flex w-full justify-between">
-        {PIPELINE_STAGES.map((stage, i) => {
-          const isPast = isRejected ? i < PIPELINE_STAGES.length - 1 : i < currentIndex;
-          const isCurrent = !isRejected && i === currentIndex;
-          const isTerminal = isRejected && i === PIPELINE_STAGES.length - 1;
-          const label = isTerminal ? "Rejected" : stage.label;
-          return (
-            <span
-              key={`label-${stage.status}`}
-              className={cn(
-                "text-[10px] font-medium",
-                isCurrent ? "text-amber-600" : isTerminal ? "text-red-500" : isPast ? "text-text-secondary" : "text-text-muted"
-              )}
-            >
-              {label}
-            </span>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
-function MetaChip({ label, value }: { label: string; value: string }) {
-  return (
-    <span className="inline-flex items-center gap-1 rounded-md bg-surface-muted px-2 py-0.5 text-[10px] text-text-tertiary ring-1 ring-border">
-      <span className="font-medium text-text-muted">{label}</span>
-      <span className="max-w-[80px] truncate">{value}</span>
-    </span>
-  );
-}

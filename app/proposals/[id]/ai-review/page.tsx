@@ -21,6 +21,7 @@ import type {
   Strictness,
 } from "@/lib/deep-review/types";
 import type { Proposal } from "@/lib/types";
+import { useProposalBackTarget } from "@/lib/use-proposal-back-target";
 
 type ResultTab =
   | "overview"
@@ -235,6 +236,7 @@ export default function AiEnabledReviewPage() {
   const id = params.id as string;
   const { can } = useProfile();
   const canRun = can("run_review");
+  const backTarget = useProposalBackTarget(id);
 
   const [proposal, setProposal] = useState<Proposal | null>(null);
   const [loading, setLoading] = useState(true);
@@ -395,10 +397,10 @@ export default function AiEnabledReviewPage() {
         <div className="max-w-6xl mx-auto py-5 px-4 sm:px-6 lg:px-8 flex items-center justify-between">
           <div className="flex items-center gap-4">
             <button
-              onClick={() => router.push(`/proposals/${id}`)}
+              onClick={() => router.push(backTarget.href)}
               className="px-3 py-1.5 border border-gray-300 rounded-lg text-sm text-gray-600 hover:bg-gray-50"
             >
-              ← Back
+              ← {backTarget.label}
             </button>
             <div>
               <h1 className="text-2xl font-bold text-gray-900">AI Enabled Review</h1>
@@ -1069,8 +1071,8 @@ export default function AiEnabledReviewPage() {
               <div className="divide-y divide-gray-50">
                 {review.rule_check.results
                   .filter((r) => r.is_builtin)
-                  .map((r) => (
-                    <RuleRow key={r.rule_id} rule={r} />
+                  .map((r, i) => (
+                    <RuleRow key={`rule-${r.rule_id}-builtin-${i}`} rule={r} />
                   ))}
               </div>
             </div>
@@ -1083,8 +1085,8 @@ export default function AiEnabledReviewPage() {
                 <div className="divide-y divide-violet-50">
                   {review.rule_check.results
                     .filter((r) => !r.is_builtin)
-                    .map((r) => (
-                      <RuleRow key={r.rule_id} rule={r} />
+                    .map((r, i) => (
+                      <RuleRow key={`rule-${r.rule_id}-custom-${i}`} rule={r} />
                     ))}
                 </div>
               </div>
@@ -1147,7 +1149,7 @@ export default function AiEnabledReviewPage() {
                   const isPartial = item.status === "partial";
                   const isMissing = item.status === "missing";
                   return (
-                    <div key={`${item.requirement_id || i}`} className={`p-4 ${isMissing ? "bg-red-50/30" : isPartial ? "bg-yellow-50/30" : ""}`}>
+                    <div key={`req-${item.requirement_id || i}-${i}`} className={`p-4 ${isMissing ? "bg-red-50/30" : isPartial ? "bg-yellow-50/30" : ""}`}>
                       <div className="flex items-start gap-3">
                         <span className="shrink-0 mt-0.5 text-lg">{isAddressed ? "✅" : isPartial ? "⚠️" : "❌"}</span>
                         <div className="flex-1 min-w-0">

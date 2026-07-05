@@ -3,6 +3,7 @@
 import {
   addWorkflowCycle,
   addWorkflowEvent,
+  getActiveProfile,
   getProposal,
   updateProposal,
   updateWorkflowCycle,
@@ -33,8 +34,10 @@ export type WorkflowAction =
   | { type: "reject"; note?: string }
   | { type: "reject_to_sparc"; note?: string };
 
-function getCurrentActor(): string {
-  return "John Doe"; // placeholder until auth is added
+async function getCurrentActor(): Promise<string> {
+  // No real auth — attribute actions to the profile selected in the switcher.
+  const profile = await getActiveProfile();
+  return profile?.name ?? "Unknown User";
 }
 
 function getCycleTypeForStage(stage: WorkflowStage): ReviewCycleType {
@@ -55,7 +58,7 @@ export async function applyWorkflowAction(
   if (!proposal) throw new Error("Proposal not found");
 
   const stage = proposal.workflowStage ?? "intake";
-  const actor = getCurrentActor();
+  const actor = await getCurrentActor();
 
   switch (action.type) {
     case "start_due_diligence":
@@ -316,6 +319,22 @@ async function handleApprove(
       });
       return getProposal(proposal.id) as Promise<Proposal>;
     }
+
+    // No further cycle exists — the last (customer) cycle just completed, so
+    // finalize the proposal instead of parking it on a dead-end completed stage.
+    const now = new Date();
+    await addWorkflowEvent({
+      proposalId: proposal.id,
+      cycleId: currentCycle?.id ?? proposal.id,
+      type: "stage_changed",
+      fromStage: nextStage,
+      toStage: "approved",
+      actor,
+      note: note ?? "All review cycles completed — proposal approved",
+      createdAt: now,
+    });
+    await updateProposal(proposal.id, { workflowStage: "approved", status: "approved" });
+    return getProposal(proposal.id) as Promise<Proposal>;
   }
 
   return transitionStage(proposal, stage, nextStage, "stage_changed", actor, note);
@@ -468,6 +487,7 @@ export async function startNewVersionCycle(
 
   const currentCycle = proposal.workflowCycles.find((c) => c.id === proposal.currentCycleId);
   const isFinalized = proposal.workflowStage === "approved" || proposal.workflowStage === "rejected";
+  const actor = await getCurrentActor();
 
   // If the proposal is finalized, restart from the proposal cycle. Otherwise continue
   // the current review cycle type so the new version is reviewed in the same context.
@@ -489,7 +509,7 @@ export async function startNewVersionCycle(
       type: "cycle_completed",
       fromStage: proposal.workflowStage,
       toStage: completedStage,
-      actor: getCurrentActor(),
+      actor,
       note: note ?? "Completed for new version upload",
       createdAt: now,
     });
@@ -516,7 +536,7 @@ export async function startNewVersionCycle(
     type: "cycle_started",
     fromStage: proposal.workflowStage,
     toStage: reviewStage,
-    actor: getCurrentActor(),
+    actor,
     note: note ?? `New version cycle started (${cycleTypeLabels[cycleType]} iteration ${iteration})`,
     createdAt: now,
   });

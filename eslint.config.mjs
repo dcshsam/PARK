@@ -12,6 +12,9 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Nested deploy build output and its dependencies
+    "btp-deploy/.next/**",
+    "btp-deploy/node_modules/**",
   ]),
 ]);
 

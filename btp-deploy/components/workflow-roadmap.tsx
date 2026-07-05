@@ -4,7 +4,6 @@ import { useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Textarea } from "@/components/ui/textarea";
-import { Badge } from "@/components/ui/badge";
 import {
   applyWorkflowAction,
   getActionLabel,
@@ -26,6 +25,7 @@ import {
 } from "@/lib/workflow-utils";
 import type { Proposal, WorkflowStage, WorkflowEvent, WorkflowCycle, ReviewCycleType } from "@/lib/types";
 import { useProfile } from "@/components/profile-provider";
+import { StageHeroCard } from "@/components/stage-hero-card";
 import {
   Check,
   Clock,
@@ -51,6 +51,10 @@ import { differenceInBusinessDays } from "date-fns";
 interface WorkflowRoadmapProps {
   proposal: Proposal;
   onChange: (proposal: Proposal) => void;
+  /** Hide the "Proposal Creation" phase section — used when embedded from a flow (e.g. Lead intake) that already tracks that phase itself. */
+  hideCreationPhase?: boolean;
+  /** Which cycle cards to render (defaults to all three) — used to scope the view to one cycle at a time (e.g. per Lead event). */
+  visibleCycles?: ReviewCycleType[];
 }
 
 const CYCLE_ORDER: ReviewCycleType[] = ["proposal", "delivery", "customer"];
@@ -178,14 +182,18 @@ function workingDaysLabel(start?: Date, end?: Date): string | null {
   return `${days} working day${days === 1 ? "" : "s"}${ongoing ? " so far" : ""}`;
 }
 
-export function WorkflowRoadmap({ proposal, onChange }: WorkflowRoadmapProps) {
+export function WorkflowRoadmap({
+  proposal,
+  onChange,
+  hideCreationPhase,
+  visibleCycles = CYCLE_ORDER,
+}: WorkflowRoadmapProps) {
   const { can } = useProfile();
   const [loading, setLoading] = useState<WorkflowAction["type"] | null>(null);
   const [note, setNote] = useState("");
 
   const currentStage = proposal.workflowStage;
   const currentCycleType = currentStage ? getCycleType(currentStage) : null;
-  const currentTheme = getStageTheme(currentStage ?? "intake", currentCycleType);
   const events = proposal.workflowEvents;
   const cycles = proposal.workflowCycles;
   const availableActions = getAvailableActions(proposal);
@@ -195,6 +203,36 @@ export function WorkflowRoadmap({ proposal, onChange }: WorkflowRoadmapProps) {
   const currentStageDuration = stageDurations[stageDurations.length - 1]?.durationMs ?? 0;
   const totalDuration = useMemo(() => getTotalProposalDuration(proposal), [proposal]);
   const creationDuration = useMemo(() => getCreationDuration(proposal), [proposal]);
+
+  // Scope the hero card to whichever single cycle is being viewed (e.g. one Lead
+  // event tab) instead of always reflecting the proposal's overall current
+  // stage — so Event 6/7's card shows Delivery/Customer progress, not whatever
+  // cycle the proposal actually happens to be in.
+  const focusCycleType = visibleCycles.length === 1 ? visibleCycles[0] : null;
+  const focusCycle = focusCycleType
+    ? cycles.filter((c) => c.cycleType === focusCycleType).sort((a, b) => b.iteration - a.iteration)[0]
+    : undefined;
+  const focusIsLive = Boolean(focusCycle) && proposal.currentCycleId === focusCycle?.id && !focusCycle?.completedAt;
+  const focusSummary = focusCycle ? getCycleSummary(focusCycle, events) : null;
+
+  const heroCycleType = focusCycleType ?? currentCycleType;
+  const heroStage: WorkflowStage | undefined = focusCycleType
+    ? focusIsLive
+      ? currentStage
+      : focusCycle?.completedAt
+        ? (`${focusCycleType}_completed` as WorkflowStage)
+        : undefined
+    : currentStage;
+  const heroTheme = getStageTheme(heroStage ?? "intake", heroCycleType);
+  const heroTimeInStage = focusCycleType
+    ? focusIsLive
+      ? currentStageDuration
+      : (focusSummary?.durationMs ?? 0)
+    : currentStageDuration;
+  const heroTotalTime = focusCycleType ? (focusSummary?.durationMs ?? 0) : totalDuration;
+  const heroIteration = focusCycleType
+    ? (focusCycle?.iteration ?? 1)
+    : (cycles.find((c) => c.id === proposal.currentCycleId)?.iteration ?? 1);
   const inCreation = currentStage === "intake";
   const creationDone = Boolean(currentStage) && currentStage !== "intake";
   const ddAt = proposal.dueDiligenceStartedAt;
@@ -258,32 +296,16 @@ export function WorkflowRoadmap({ proposal, onChange }: WorkflowRoadmapProps) {
   return (
     <div className="space-y-6">
       {/* Current Status Hero */}
-      <Card className={cn("overflow-hidden border-l-4", currentTheme.border)}>
-        <div className={cn("h-2 w-full", currentTheme.bg)} />
-        <CardContent className="p-6">
-          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-            <div className="space-y-1">
-              <p className="text-sm font-medium text-text-tertiary">Current Stage</p>
-              <h2 className={cn("text-2xl font-bold", currentTheme.color)}>
-                {currentStage ? stageLabels[currentStage] : "Not started"}
-              </h2>
-              {currentCycleType && (
-                <Badge variant="secondary" className={cn("font-medium", currentTheme.lightBg, currentTheme.color)}>
-                  {cycleTypeLabels[currentCycleType]} Cycle
-                </Badge>
-              )}
-            </div>
-            <div className="flex flex-wrap gap-4 text-sm">
-              <Metric label="Time in stage" value={formatDurationShort(currentStageDuration)} />
-              <Metric label="Total time" value={formatDurationShort(totalDuration)} />
-              <Metric
-                label="Iteration"
-                value={String(cycles.find((c) => c.id === proposal.currentCycleId)?.iteration ?? 1)}
-              />
-            </div>
-          </div>
-        </CardContent>
-      </Card>
+      <StageHeroCard
+        title={heroStage ? stageLabels[heroStage] : "Not started"}
+        badge={heroCycleType ? `${cycleTypeLabels[heroCycleType]} Cycle` : undefined}
+        theme={heroTheme}
+        metrics={[
+          { label: "Time in stage", value: formatDurationShort(heroTimeInStage) },
+          { label: "Total time", value: formatDurationShort(heroTotalTime) },
+          { label: "Iteration", value: String(heroIteration) },
+        ]}
+      />
 
       {/* Action Panel */}
       {currentStage && !isFinalized && can("workflow_action") && (
@@ -356,6 +378,7 @@ export function WorkflowRoadmap({ proposal, onChange }: WorkflowRoadmapProps) {
         </CardHeader>
         <CardContent className="space-y-8">
           {/* Proposal Creation phase */}
+          {!hideCreationPhase && (
           <div className="relative">
             <div className="mb-5 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
               <div className="flex items-center gap-3">
@@ -441,8 +464,9 @@ export function WorkflowRoadmap({ proposal, onChange }: WorkflowRoadmapProps) {
               </div>
             </div>
           </div>
+          )}
 
-          {CYCLE_ORDER.map((cycleType) => {
+          {CYCLE_ORDER.filter((cycleType) => visibleCycles.includes(cycleType)).map((cycleType) => {
             const theme = cycleTheme[cycleType];
             const cycle = cycles
               .filter((c) => c.cycleType === cycleType)
@@ -681,15 +705,6 @@ export function WorkflowRoadmap({ proposal, onChange }: WorkflowRoadmapProps) {
           </div>
         </CardContent>
       </Card>
-    </div>
-  );
-}
-
-function Metric({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="rounded-xl bg-surface-muted/70 px-4 py-2">
-      <p className="text-xs text-text-tertiary">{label}</p>
-      <p className="font-semibold text-text-primary">{value}</p>
     </div>
   );
 }

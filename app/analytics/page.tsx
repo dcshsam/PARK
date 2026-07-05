@@ -6,9 +6,10 @@ import { motion } from "framer-motion";
 import { Responsive as ResponsiveGridLayout, type Layout, useContainerWidth } from "react-grid-layout";
 import "react-grid-layout/css/styles.css";
 import "react-resizable/css/styles.css";
-import { getProposals, getDeepReviewMap } from "@/lib/db";
-import type { Proposal, ProposalStatus } from "@/lib/types";
-import { statusLabels } from "@/lib/types";
+import { getProposals, getDeepReviewMap, getLeads } from "@/lib/db";
+import type { Lead, Proposal, ProposalStatus } from "@/lib/types";
+import { statusLabels, leadStatusLabels } from "@/lib/types";
+import { LEAD_EVENT_SHORT, LEAD_STATUS_BADGE } from "@/lib/lead-events";
 import type { DeepReview } from "@/lib/deep-review/types";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Select } from "@/components/ui/select";
@@ -130,6 +131,30 @@ function dimValue(p: Proposal, key: SegmentKey): string {
   return v || "Unassigned";
 }
 
+/** Group leads by a dimension, tracking totals and conversions per bucket. */
+function groupLeads(
+  leads: Lead[],
+  dim: (l: Lead) => string | undefined
+): { name: string; total: number; converted: number }[] {
+  const map = new Map<string, { total: number; converted: number }>();
+  for (const l of leads) {
+    const key = (dim(l) ?? "").trim() || "Unassigned";
+    const entry = map.get(key) ?? { total: 0, converted: 0 };
+    entry.total += 1;
+    if (l.status === "converted") entry.converted += 1;
+    map.set(key, entry);
+  }
+  return Array.from(map.entries())
+    .map(([name, v]) => ({ name, ...v }))
+    .sort((a, b) => b.total - a.total)
+    .slice(0, 8);
+}
+
+function leadEventTimestamp(lead: Lead, eventNumber: number): Date | undefined {
+  const data = lead.eventData?.[`event${eventNumber}`] as { completedAt?: string | Date } | undefined;
+  return data?.completedAt ? new Date(data.completedAt) : undefined;
+}
+
 function distinctValues(proposals: Proposal[], key: "sparcOwner" | "proposalRegion"): string[] {
   const set = new Set<string>();
   for (const p of proposals) {
@@ -141,6 +166,7 @@ function distinctValues(proposals: Proposal[], key: "sparcOwner" | "proposalRegi
 
 export default function AnalyticsPage() {
   const [proposals, setProposals] = useState<Proposal[]>([]);
+  const [leads, setLeads] = useState<Lead[]>([]);
   const [reviews, setReviews] = useState<Map<string, DeepReview>>(new Map());
   const [loading, setLoading] = useState(true);
 
@@ -152,18 +178,16 @@ export default function AnalyticsPage() {
   const [segmentBy, setSegmentBy] = useState<SegmentKey>("sparcOwner");
   const [trendChartType, setTrendChartType] = useState<"bar" | "line" | "area">("bar");
   const [statusChartType, setStatusChartType] = useState<"pie" | "donut">("pie");
-  const [layouts, setLayouts] = useState(defaultLayouts);
-  const { containerRef: gridRef, width } = useContainerWidth();
-
-  useEffect(() => {
-    if (typeof window === "undefined") return;
+  const [layouts, setLayouts] = useState(() => {
+    if (typeof window === "undefined") return defaultLayouts;
     try {
       const saved = window.localStorage.getItem(LAYOUT_KEY);
-      if (saved) setLayouts(JSON.parse(saved));
+      return saved ? (JSON.parse(saved) as typeof defaultLayouts) : defaultLayouts;
     } catch {
-      // ignore corrupt layout
+      return defaultLayouts;
     }
-  }, []);
+  });
+  const { containerRef: gridRef, width } = useContainerWidth();
 
   const handleLayoutChange = (_currentLayout: Layout, allLayouts: Partial<Record<string, Layout>>) => {
     const next = { ...defaultLayouts, ...allLayouts } as typeof defaultLayouts;
@@ -181,9 +205,10 @@ export default function AnalyticsPage() {
   };
 
   useEffect(() => {
-    Promise.all([getProposals(), getDeepReviewMap()]).then(([p, m]) => {
+    Promise.all([getProposals(), getDeepReviewMap(), getLeads()]).then(([p, m, l]) => {
       setProposals(p);
       setReviews(m);
+      setLeads(l);
       setLoading(false);
     });
   }, []);
@@ -257,6 +282,59 @@ export default function AnalyticsPage() {
         return { name: label, count };
       });
   }, [filtered]);
+
+  // ── Lead Master analytics ──────────────────────────────────────────────────
+  const filteredLeads = useMemo(() => {
+    const cutoff = periodCutoff(period);
+    return leads.filter((l) => !cutoff || new Date(l.createdAt).getTime() >= cutoff);
+  }, [leads, period]);
+
+  const leadKpis = useMemo(() => {
+    const total = filteredLeads.length;
+    const converted = filteredLeads.filter((l) => l.status === "converted").length;
+    const dropped = filteredLeads.filter((l) => l.status === "dropped").length;
+    const active = total - converted - dropped;
+    const decided = converted + dropped;
+    const winRate = decided > 0 ? Math.round((converted / decided) * 100) : null;
+    // Age measured against the latest lead update rather than wall-clock time,
+    // keeping this memo pure across re-renders.
+    const newest = filteredLeads.reduce(
+      (max, l) => Math.max(max, new Date(l.updatedAt).getTime()),
+      0
+    );
+    const ages = filteredLeads.map((l) => newest - new Date(l.createdAt).getTime());
+    const avgAgeDays = ages.length
+      ? Math.round(ages.reduce((a, b) => a + b, 0) / ages.length / 86400000)
+      : 0;
+    return { total, active, converted, winRate, avgAgeDays };
+  }, [filteredLeads]);
+
+  const leadsByGtm = useMemo(() => groupLeads(filteredLeads, (l) => l.gtmName), [filteredLeads]);
+  const leadsByRegion = useMemo(() => groupLeads(filteredLeads, (l) => l.proposalRegion), [filteredLeads]);
+  const leadsByVertical = useMemo(() => groupLeads(filteredLeads, (l) => l.vertical), [filteredLeads]);
+
+  // Average days spent in each lead event, from the completedAt checkpoints
+  // (events driven by the proposal workflow don't record checkpoints and are skipped).
+  const leadEventDurations = useMemo(() => {
+    const sums = LEAD_EVENT_SHORT.map(() => ({ total: 0, count: 0 }));
+    for (const l of filteredLeads) {
+      for (let n = 1; n <= LEAD_EVENT_SHORT.length; n++) {
+        const end = leadEventTimestamp(l, n);
+        if (!end) continue;
+        const start = n === 1 ? new Date(l.createdAt) : leadEventTimestamp(l, n - 1);
+        if (!start) continue;
+        const ms = end.getTime() - start.getTime();
+        if (ms >= 0) {
+          sums[n - 1].total += ms;
+          sums[n - 1].count += 1;
+        }
+      }
+    }
+    return LEAD_EVENT_SHORT.map((label, i) => ({
+      name: label,
+      days: sums[i].count ? Number((sums[i].total / sums[i].count / 86400000).toFixed(1)) : 0,
+    }));
+  }, [filteredLeads]);
 
   const segmentLabel = SEGMENTS.find((s) => s.key === segmentBy)?.label ?? "Segment";
   const filtersActive = period !== "all" || status !== "all" || region !== "all" || owner !== "all";
@@ -606,6 +684,185 @@ export default function AnalyticsPage() {
                       </Link>
                     );
                   })}
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* ── Lead Master analytics ─────────────────────────────────────── */}
+          <div className="pt-4">
+            <h2 className="text-lg font-semibold text-text-primary">Proposal Master analytics</h2>
+            <p className="text-sm text-text-tertiary">
+              Pipeline performance by GTM, region and vertical — {PERIOD_LABELS[period].toLowerCase()}.
+            </p>
+          </div>
+
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            <Kpi
+              icon={FileText}
+              label="Total Proposals"
+              value={leadKpis.total}
+              sub={`${leadKpis.active} active in pipeline`}
+              color="text-primary-600"
+              bg="bg-primary-100 dark:bg-primary-500/10"
+            />
+            <Kpi
+              icon={CheckCircle2}
+              label="Converted"
+              value={leadKpis.converted}
+              color="text-green-600"
+              bg="bg-green-50 dark:bg-green-500/10"
+            />
+            <Kpi
+              icon={Gauge}
+              label="Win Rate"
+              value={leadKpis.winRate === null ? "—" : `${leadKpis.winRate}%`}
+              sub="of decided proposals (won vs dropped)"
+              color="text-amber-600"
+              bg="bg-amber-50 dark:bg-amber-500/10"
+            />
+            <Kpi
+              icon={AlertTriangle}
+              label="Avg. Proposal Age"
+              value={`${leadKpis.avgAgeDays}d`}
+              sub="since initiation"
+              color="text-rose-600"
+              bg="bg-rose-50 dark:bg-rose-500/10"
+            />
+          </div>
+
+          <div className="grid gap-6 lg:grid-cols-2">
+            <Card>
+              <CardHeader>
+                <CardTitle>Proposals by GTM Owner</CardTitle>
+                <CardDescription>Volume brought in vs. converted, per GTM.</CardDescription>
+              </CardHeader>
+              <CardContent>
+                {leadsByGtm.length === 0 ? (
+                  <div className="flex h-56 items-center justify-center text-sm text-text-muted">No proposals yet</div>
+                ) : (
+                  <div className="h-56">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <BarChart data={leadsByGtm} margin={{ top: 8, right: 8, left: -24, bottom: 0 }}>
+                        <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                        <XAxis dataKey="name" tick={{ fontSize: 11 }} interval={0} angle={-15} textAnchor="end" height={44} />
+                        <YAxis allowDecimals={false} tick={{ fontSize: 11 }} />
+                        <Tooltip />
+                        <Legend />
+                        <Bar dataKey="total" name="Proposals" fill="#6366f1" radius={[6, 6, 0, 0]} />
+                        <Bar dataKey="converted" name="Converted" fill="#22c55e" radius={[6, 6, 0, 0]} />
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle>Proposals by Region</CardTitle>
+                <CardDescription>Geographic spread of the pipeline.</CardDescription>
+              </CardHeader>
+              <CardContent>
+                {leadsByRegion.length === 0 ? (
+                  <div className="flex h-56 items-center justify-center text-sm text-text-muted">No proposals yet</div>
+                ) : (
+                  <div className="h-56">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <BarChart data={leadsByRegion} margin={{ top: 8, right: 8, left: -24, bottom: 0 }}>
+                        <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                        <XAxis dataKey="name" tick={{ fontSize: 11 }} interval={0} angle={-15} textAnchor="end" height={44} />
+                        <YAxis allowDecimals={false} tick={{ fontSize: 11 }} />
+                        <Tooltip />
+                        <Legend />
+                        <Bar dataKey="total" name="Proposals" fill="#0ea5e9" radius={[6, 6, 0, 0]} />
+                        <Bar dataKey="converted" name="Converted" fill="#22c55e" radius={[6, 6, 0, 0]} />
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle>Proposals by Vertical</CardTitle>
+                <CardDescription>Which practice areas the pipeline leans on.</CardDescription>
+              </CardHeader>
+              <CardContent>
+                {leadsByVertical.length === 0 ? (
+                  <div className="flex h-56 items-center justify-center text-sm text-text-muted">No proposals yet</div>
+                ) : (
+                  <div className="h-56">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <BarChart data={leadsByVertical} margin={{ top: 8, right: 8, left: -24, bottom: 0 }}>
+                        <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                        <XAxis dataKey="name" tick={{ fontSize: 11 }} interval={0} angle={-15} textAnchor="end" height={44} />
+                        <YAxis allowDecimals={false} tick={{ fontSize: 11 }} />
+                        <Tooltip />
+                        <Bar dataKey="total" name="Proposals" fill="#8b5cf6" radius={[6, 6, 0, 0]} />
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle>Avg. Days per Event</CardTitle>
+                <CardDescription>
+                  Where proposals spend their time (events with recorded checkpoints).
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                {leadKpis.total === 0 ? (
+                  <div className="flex h-56 items-center justify-center text-sm text-text-muted">No proposals yet</div>
+                ) : (
+                  <div className="h-56">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <BarChart data={leadEventDurations} margin={{ top: 8, right: 8, left: -24, bottom: 0 }}>
+                        <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                        <XAxis dataKey="name" tick={{ fontSize: 10 }} interval={0} angle={-20} textAnchor="end" height={52} />
+                        <YAxis tick={{ fontSize: 11 }} />
+                        <Tooltip formatter={(v) => [`${v} days`, "Avg. duration"]} />
+                        <Bar dataKey="days" name="Avg. days" fill="#f59e0b" radius={[6, 6, 0, 0]} />
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </div>
+
+          <Card>
+            <CardHeader>
+              <CardTitle>Proposal Master ({filteredLeads.length})</CardTitle>
+              <CardDescription>GTM · region · current event · status for the selected period.</CardDescription>
+            </CardHeader>
+            <CardContent className="p-0">
+              <div className="divide-y divide-border-subtle">
+                {filteredLeads.map((l) => (
+                  <Link
+                    key={l.id}
+                    href={`/leads/${l.id}`}
+                    className="flex items-center justify-between gap-3 px-5 py-3 transition-colors hover:bg-surface-muted/50"
+                  >
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-medium text-text-primary">{l.leadName}</p>
+                      <p className="truncate text-xs text-text-tertiary">
+                        {l.clientName || "—"}
+                        {l.gtmName ? ` · GTM: ${l.gtmName}` : ""}
+                        {l.proposalRegion ? ` · ${l.proposalRegion}` : ""}
+                      </p>
+                    </div>
+                    <div className="flex shrink-0 items-center gap-3">
+                      <span className="whitespace-nowrap rounded-full bg-surface-muted px-2 py-0.5 text-xs font-medium text-text-secondary">
+                        {l.currentEvent ?? 1}/8 · {LEAD_EVENT_SHORT[(l.currentEvent ?? 1) - 1]}
+                      </span>
+                      <Badge className={LEAD_STATUS_BADGE[l.status]}>{leadStatusLabels[l.status]}</Badge>
+                    </div>
+                  </Link>
+                ))}
               </div>
             </CardContent>
           </Card>

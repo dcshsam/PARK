@@ -3,8 +3,9 @@
 import { Sun, Moon, Monitor } from "lucide-react";
 import { useTheme } from "@/components/theme-provider";
 import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 
-export function ThemeToggle({ showLabel = false }: { showLabel?: boolean }) {
+export function ThemeToggle({ showLabel = false, className }: { showLabel?: boolean; className?: string }) {
   const { theme, setTheme, resolvedTheme } = useTheme();
 
   const cycle = () => {
@@ -21,7 +22,7 @@ export function ThemeToggle({ showLabel = false }: { showLabel?: boolean }) {
       size="sm"
       onClick={cycle}
       aria-label={`Theme: ${theme}. Click to cycle.`}
-      className="gap-2"
+      className={cn("gap-2", className)}
     >
       <Icon size={16} />
       {showLabel && (

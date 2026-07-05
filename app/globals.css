@@ -3,27 +3,27 @@
 :root {
   /* Primitive palette — OKLCH-based, perceptually uniform */
   --color-white: #ffffff;
-  --color-black: #0f172a;
+  --color-black: #16325c;
 
-  --color-slate-50: #f8fafc;
-  --color-slate-100: #f1f5f9;
-  --color-slate-200: #e2e8f0;
-  --color-slate-300: #cbd5e1;
-  --color-slate-400: #94a3b8;
-  --color-slate-500: #64748b;
-  --color-slate-600: #475569;
-  --color-slate-700: #334155;
-  --color-slate-800: #1e293b;
-  --color-slate-900: #0f172a;
+  --color-slate-50: #f3f2f2;
+  --color-slate-100: #ecebea;
+  --color-slate-200: #dddbda;
+  --color-slate-300: #c9c7c5;
+  --color-slate-400: #b0adab;
+  --color-slate-500: #969492;
+  --color-slate-600: #706e6b;
+  --color-slate-700: #514f4d;
+  --color-slate-800: #3e3e3c;
+  --color-slate-900: #16325c;
 
-  --color-indigo-50: #eef2ff;
-  --color-indigo-100: #e0e7ff;
-  --color-indigo-200: #c7d2fe;
-  --color-indigo-300: #a5b4fc;
-  --color-indigo-400: #818cf8;
-  --color-indigo-500: #6366f1;
-  --color-indigo-600: #4f46e5;
-  --color-indigo-700: #4338ca;
+  --color-indigo-50: #eaf5fe;
+  --color-indigo-100: #cfe9ff;
+  --color-indigo-200: #9dc8f5;
+  --color-indigo-300: #63b3ff;
+  --color-indigo-400: #1b96ff;
+  --color-indigo-500: #1b96ff;
+  --color-indigo-600: #0176d3;
+  --color-indigo-700: #014486;
 
   --color-amber-50: #fffbeb;
   --color-amber-100: #fef3c7;
@@ -125,33 +125,33 @@
 }
 
 .dark {
-  --background: #020617;
-  --foreground: #f8fafc;
+  --background: #001639;
+  --foreground: #f3f9ff;
 
-  --surface: #0f172a;
-  --surface-elevated: #1e293b;
-  --surface-muted: #1e293b;
-  --surface-subtle: #0b1221;
+  --surface: #0b2a52;
+  --surface-elevated: #123a68;
+  --surface-muted: #0f3260;
+  --surface-subtle: #001028;
 
-  --text-primary: #f8fafc;
-  --text-secondary: #94a3b8;
-  --text-tertiary: #64748b;
-  --text-muted: #475569;
+  --text-primary: #f3f9ff;
+  --text-secondary: #b8d4f0;
+  --text-tertiary: #8bb3e0;
+  --text-muted: #5c86b3;
 
-  --border: #1e293b;
-  --border-subtle: #0f172a;
-  --border-strong: #334155;
+  --border: #123a68;
+  --border-subtle: #0b2a52;
+  --border-strong: #1f4d82;
 
-  --primary-50: #1e1b4b;
-  --primary-100: #312e81;
-  --primary-200: #4338ca;
-  --primary-500: #818cf8;
-  --primary-600: #a5b4fc;
-  --primary-700: #c7d2fe;
+  --primary-50: #001639;
+  --primary-100: #032d60;
+  --primary-200: #0b5cab;
+  --primary-500: #63b3ff;
+  --primary-600: #9dc8f5;
+  --primary-700: #cfe9ff;
 
-  --accent-bg: rgba(99, 102, 241, 0.15);
-  --accent-text: #a5b4fc;
-  --accent-border: rgba(99, 102, 241, 0.3);
+  --accent-bg: rgba(1, 118, 211, 0.15);
+  --accent-text: #9dc8f5;
+  --accent-border: rgba(1, 118, 211, 0.3);
 
   --status-success-bg: rgba(34, 197, 94, 0.12);
   --status-success-text: #4ade80;
@@ -190,7 +190,7 @@
   --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.4), 0 2px 4px -2px rgb(0 0 0 / 0.3);
   --shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 0.5), 0 4px 6px -4px rgb(0 0 0 / 0.4);
   --shadow-xl: 0 20px 25px -5px rgb(0 0 0 / 0.6), 0 8px 10px -6px rgb(0 0 0 / 0.5);
-  --shadow-ring: 0 0 0 3px rgba(99, 102, 241, 0.3);
+  --shadow-ring: 0 0 0 3px rgba(1, 118, 211, 0.3);
 }
 
 @theme inline {
@@ -293,3 +293,61 @@ body {
     @apply rounded-xl border border-border bg-surface shadow-sm transition-all;
   }
 }
+
+/* SAP Architecture Center inspired background motion */
+@keyframes sap-float {
+  0%,
+  100% {
+    transform: translate(0, 0) rotate(0deg) scale(1);
+  }
+  25% {
+    transform: translate(12%, 14%) rotate(8deg) scale(1.18);
+  }
+  50% {
+    transform: translate(-8%, 10%) rotate(-4deg) scale(1.08);
+  }
+  75% {
+    transform: translate(6%, -12%) rotate(6deg) scale(1.15);
+  }
+}
+
+@keyframes sap-float-reverse {
+  0%,
+  100% {
+    transform: translate(0, 0) rotate(0deg) scale(1);
+  }
+  25% {
+    transform: translate(-12%, 14%) rotate(-8deg) scale(1.15);
+  }
+  50% {
+    transform: translate(10%, -10%) rotate(5deg) scale(1.1);
+  }
+  75% {
+    transform: translate(-6%, 12%) rotate(-6deg) scale(1.18);
+  }
+}
+
+@keyframes sap-pulse {
+  0%,
+  100% {
+    opacity: 0.4;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.75;
+    transform: scale(1.15);
+  }
+}
+
+.sap-float {
+  animation: none;
+}
+
+.sap-float-reverse {
+  animation: none;
+}
+
+.sap-pulse {
+  animation: none;
+}
+

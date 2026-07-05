@@ -1,10 +1,10 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { addProposal } from "@/lib/db";
 import { sampleProposal, sampleDocuments } from "@/lib/sample-proposal";
-import type { DocumentCategory, UploadedFile } from "@/lib/types";
+import type { Proposal, ProposalDocumentCategory, UploadedFile } from "@/lib/types";
 import { categoryLabels } from "@/lib/types";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -23,42 +23,108 @@ import {
   getProposalReviewers,
   getProposalRegions,
 } from "@/lib/workspace-config";
+import { getTeamMembers, combineAssignableNames } from "@/lib/team-members";
 import { Check, ChevronLeft, ChevronRight, Loader2 } from "lucide-react";
 import { cn, formatBytes } from "@/lib/utils";
 
-const supportingCategories: DocumentCategory[] = ["rfp", "transcript", "customer_doc"];
+const supportingCategories: ProposalDocumentCategory[] = ["rfp", "transcript", "customer_doc"];
 
-export function ProposalForm() {
+/** Ensure a pre-filled value (e.g. carried over from a Lead) still renders as selected, even if it isn't part of the configured options list. */
+function withValue(options: string[], value?: string): string[] {
+  if (!value || options.includes(value)) return options;
+  return [value, ...options];
+}
+
+function withNamedValue(
+  options: { name: string; team?: string }[],
+  value?: string
+): { name: string; team?: string }[] {
+  if (!value || options.some((o) => o.name === value)) return options;
+  return [{ name: value }, ...options];
+}
+
+interface ProposalFormProps {
+  /** Pre-fill Basic Info fields — used when this form is embedded from another flow (e.g. Lead intake). */
+  initialValues?: Partial<{
+    title: string;
+    clientName: string;
+    description: string;
+    initiationDate: string;
+    dueDate: string;
+    technology: string;
+    projectType: string;
+    sparcOwner: string;
+    sparcMentor: string;
+    gtmOwner: string;
+    proposalReviewer: string;
+    proposalRegion: string;
+  }>;
+  /** Pre-fill documents already collected upstream (e.g. lead attachments), grouped by proposal category. */
+  initialDocuments?: Omit<UploadedFile, "id" | "proposalId" | "uploadedAt">[];
+  /** Called with the created proposal instead of the default navigation to /proposals/[id]. */
+  onCreated?: (proposal: Proposal) => void;
+  /** Prefix for the step numbers (e.g. "5." when embedded under Lead Event 5, showing 5.1, 5.2...). */
+  stepLabelPrefix?: string;
+  /** Which of the 4 steps to actually show (defaults to all). Steps left out are assumed already satisfied via initialValues/initialDocuments. */
+  steps?: number[];
+  /** Label for the final submit button (defaults to "Create Proposal"). */
+  submitLabel?: string;
+}
+
+export function ProposalForm({
+  initialValues,
+  initialDocuments,
+  onCreated,
+  stepLabelPrefix = "",
+  steps: stepsProp,
+  submitLabel = "Create Proposal",
+}: ProposalFormProps = {}) {
   const router = useRouter();
-  const [step, setStep] = useState(1);
+  const activeSteps = stepsProp && stepsProp.length > 0 ? stepsProp : [1, 2, 3, 4];
+  const [step, setStep] = useState(activeSteps[0]);
   const [submitting, setSubmitting] = useState(false);
   const [form, setForm] = useState({
-    title: "",
-    clientName: "",
-    description: "",
-    dueDate: "",
-    technology: "",
-    projectType: "",
-    sparcOwner: "",
-    sparcMentor: "",
-    gtmOwner: "",
-    proposalReviewer: "",
-    proposalRegion: "",
+    title: initialValues?.title ?? "",
+    clientName: initialValues?.clientName ?? "",
+    description: initialValues?.description ?? "",
+    initiationDate: initialValues?.initiationDate ?? "",
+    dueDate: initialValues?.dueDate ?? "",
+    technology: initialValues?.technology ?? "",
+    projectType: initialValues?.projectType ?? "",
+    sparcOwner: initialValues?.sparcOwner ?? "",
+    sparcMentor: initialValues?.sparcMentor ?? "",
+    gtmOwner: initialValues?.gtmOwner ?? "",
+    proposalReviewer: initialValues?.proposalReviewer ?? "",
+    proposalRegion: initialValues?.proposalRegion ?? "",
     documents: {
-      rfp: [] as Omit<UploadedFile, "id" | "proposalId" | "uploadedAt">[],
-      transcript: [] as Omit<UploadedFile, "id" | "proposalId" | "uploadedAt">[],
-      customer_doc: [] as Omit<UploadedFile, "id" | "proposalId" | "uploadedAt">[],
-      final_proposal: [] as Omit<UploadedFile, "id" | "proposalId" | "uploadedAt">[],
+      rfp: (initialDocuments ?? []).filter((d) => d.category === "rfp"),
+      transcript: (initialDocuments ?? []).filter((d) => d.category === "transcript"),
+      customer_doc: (initialDocuments ?? []).filter((d) => d.category === "customer_doc"),
+      final_proposal: (initialDocuments ?? []).filter((d) => d.category === "final_proposal"),
     },
   });
 
-  const technologies = getTechnologies();
-  const projectTypes = getProjectTypes();
-  const sparcOwners = getSparcOwners();
-  const sparcMentors = getSparcMentors();
-  const gtmOwners = getGtmOwners();
-  const proposalReviewers = getProposalReviewers();
-  const proposalRegions = getProposalRegions();
+  const technologies = withValue(getTechnologies(), initialValues?.technology);
+  const projectTypes = withValue(getProjectTypes(), initialValues?.projectType);
+  const proposalRegions = withValue(getProposalRegions(), initialValues?.proposalRegion);
+
+  const teamMembers = useMemo(() => getTeamMembers(), []);
+  const sparcOwners = withNamedValue(
+    combineAssignableNames(getSparcOwners(), "sparc_owner", teamMembers),
+    initialValues?.sparcOwner
+  );
+  const sparcMentors = withNamedValue(
+    combineAssignableNames(getSparcMentors(), "sparc_mentor", teamMembers),
+    initialValues?.sparcMentor
+  );
+  const gtmOwners = withNamedValue(
+    combineAssignableNames(getGtmOwners(), "gtm_owner", teamMembers),
+    initialValues?.gtmOwner
+  );
+  const proposalReviewers = withNamedValue(
+    combineAssignableNames(getProposalReviewers(), "proposal_reviewer", teamMembers),
+    initialValues?.proposalReviewer
+  );
 
   const allDocuments = [
     ...form.documents.rfp,
@@ -67,11 +133,11 @@ export function ProposalForm() {
     ...form.documents.final_proposal,
   ];
 
-  const updateDoc = (category: DocumentCategory, files: Omit<UploadedFile, "id" | "proposalId" | "uploadedAt">[]) => {
+  const updateDoc = (category: ProposalDocumentCategory, files: Omit<UploadedFile, "id" | "proposalId" | "uploadedAt">[]) => {
     setForm((prev) => ({ ...prev, documents: { ...prev.documents, [category]: files } }));
   };
 
-  const addManualDoc = (category: DocumentCategory, text: string) => {
+  const addManualDoc = (category: ProposalDocumentCategory, text: string) => {
     const blob = new Blob([text]);
     const encoded = btoa(unescape(encodeURIComponent(text)));
     const manualDoc: Omit<UploadedFile, "id" | "proposalId" | "uploadedAt"> = {
@@ -89,6 +155,11 @@ export function ProposalForm() {
   };
 
   const canProceed = step === 1 ? form.title.trim() && form.clientName.trim() : true;
+
+  const stepOffset = (offset: number): number | null => {
+    const pos = activeSteps.indexOf(step);
+    return activeSteps[pos + offset] ?? null;
+  };
 
   const loadSampleData = () => {
     setForm((prev) => ({
@@ -115,6 +186,7 @@ export function ProposalForm() {
         title: form.title,
         clientName: form.clientName,
         description: form.description,
+        initiationDate: form.initiationDate ? new Date(form.initiationDate) : undefined,
         dueDate: form.dueDate ? new Date(form.dueDate) : undefined,
         technology: form.technology || undefined,
         projectType: form.projectType || undefined,
@@ -127,7 +199,11 @@ export function ProposalForm() {
         summary: "",
         documents: allDocuments,
       });
-      router.push(`/proposals/${proposal.id}`);
+      if (onCreated) {
+        onCreated(proposal);
+      } else {
+        router.push(`/proposals/${proposal.id}`);
+      }
     } finally {
       setSubmitting(false);
     }
@@ -149,32 +225,29 @@ export function ProposalForm() {
 
       {/* Stepper */}
       <div className="flex items-center justify-between">
-        {[1, 2, 3, 4].map((s) => (
+        {activeSteps.map((s, idx) => (
           <div key={s} className="flex flex-1 items-center last:flex-none">
             <div className="flex items-center gap-3">
               <div
                 className={cn(
-                  "flex h-10 w-10 items-center justify-center rounded-full border-2 font-semibold transition-all",
-                  step >= s
-                    ? "border-primary-600 bg-primary-600 text-white"
-                    : "border-border-strong bg-surface text-text-tertiary"
+                  "flex h-10 w-10 items-center justify-center rounded-full border-2 font-semibold shadow-md transition-all",
+                  step > s
+                    ? "border-transparent bg-primary-600 text-white"
+                    : step === s
+                      ? "border-amber-400 bg-amber-400 text-primary-900 ring-4 ring-amber-100"
+                      : "border-border bg-surface text-text-secondary"
                 )}
               >
-                {step > s ? <Check size={18} /> : s}
+                {step > s ? <Check size={18} /> : `${stepLabelPrefix}${s}`}
               </div>
-              <span
-                className={cn(
-                  "hidden text-sm font-medium md:block",
-                  step >= s ? "text-text-primary" : "text-text-tertiary"
-                )}
-              >
+              <span className="hidden text-sm font-medium text-text-primary md:block">
                 {s === 1 && "Basic Info"}
                 {s === 2 && "Supporting Docs"}
                 {s === 3 && "Final Proposal"}
                 {s === 4 && "Review & Submit"}
               </span>
             </div>
-            {s !== 4 && (
+            {idx !== activeSteps.length - 1 && (
               <div
                 className={cn(
                   "mx-4 h-0.5 flex-1 transition-colors",
@@ -259,9 +332,9 @@ export function ProposalForm() {
                     onChange={(e) => setForm({ ...form, sparcOwner: e.target.value })}
                   >
                     <option value="">Select Sparc owner...</option>
-                    {sparcOwners.map((owner) => (
-                      <option key={owner} value={owner}>
-                        {owner}
+                    {sparcOwners.map(({ name, team }) => (
+                      <option key={name} value={name}>
+                        {team ? `${name} (${team})` : name}
                       </option>
                     ))}
                   </Select>
@@ -274,9 +347,9 @@ export function ProposalForm() {
                     onChange={(e) => setForm({ ...form, sparcMentor: e.target.value })}
                   >
                     <option value="">Select Sparc mentor...</option>
-                    {sparcMentors.map((mentor) => (
-                      <option key={mentor} value={mentor}>
-                        {mentor}
+                    {sparcMentors.map(({ name, team }) => (
+                      <option key={name} value={name}>
+                        {team ? `${name} (${team})` : name}
                       </option>
                     ))}
                   </Select>
@@ -291,9 +364,9 @@ export function ProposalForm() {
                     onChange={(e) => setForm({ ...form, gtmOwner: e.target.value })}
                   >
                     <option value="">Select GTM owner...</option>
-                    {gtmOwners.map((owner) => (
-                      <option key={owner} value={owner}>
-                        {owner}
+                    {gtmOwners.map(({ name, team }) => (
+                      <option key={name} value={name}>
+                        {team ? `${name} (${team})` : name}
                       </option>
                     ))}
                   </Select>
@@ -306,9 +379,9 @@ export function ProposalForm() {
                     onChange={(e) => setForm({ ...form, proposalReviewer: e.target.value })}
                   >
                     <option value="">Select reviewer...</option>
-                    {proposalReviewers.map((reviewer) => (
-                      <option key={reviewer} value={reviewer}>
-                        {reviewer}
+                    {proposalReviewers.map(({ name, team }) => (
+                      <option key={name} value={name}>
+                        {team ? `${name} (${team})` : name}
                       </option>
                     ))}
                   </Select>
@@ -329,14 +402,25 @@ export function ProposalForm() {
                   </Select>
                 </div>
               </div>
-              <div className="space-y-2">
-                <Label htmlFor="dueDate">Response Due Date</Label>
-                <Input
-                  id="dueDate"
-                  type="date"
-                  value={form.dueDate}
-                  onChange={(e) => setForm({ ...form, dueDate: e.target.value })}
-                />
+              <div className="grid gap-4 md:grid-cols-2">
+                <div className="space-y-2">
+                  <Label htmlFor="initiationDate">Proposal Initiation Date</Label>
+                  <Input
+                    id="initiationDate"
+                    type="date"
+                    value={form.initiationDate}
+                    onChange={(e) => setForm({ ...form, initiationDate: e.target.value })}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="dueDate">Response Due Date</Label>
+                  <Input
+                    id="dueDate"
+                    type="date"
+                    value={form.dueDate}
+                    onChange={(e) => setForm({ ...form, dueDate: e.target.value })}
+                  />
+                </div>
               </div>
               <div className="space-y-2">
                 <Label htmlFor="description">Description / Notes</Label>
@@ -424,6 +508,12 @@ export function ProposalForm() {
                     <dd className="text-sm font-medium text-text-primary">{form.clientName}</dd>
                   </div>
                   <div>
+                    <dt className="text-xs font-medium uppercase text-text-tertiary">Initiation Date</dt>
+                    <dd className="text-sm text-text-primary">
+                      {form.initiationDate ? new Date(form.initiationDate).toLocaleDateString() : "Not set"}
+                    </dd>
+                  </div>
+                  <div>
                     <dt className="text-xs font-medium uppercase text-text-tertiary">Due Date</dt>
                     <dd className="text-sm text-text-primary">
                       {form.dueDate ? new Date(form.dueDate).toLocaleDateString() : "Not set"}
@@ -485,12 +575,14 @@ export function ProposalForm() {
               )}
             </CardContent>
             <CardFooter className="justify-end gap-3">
-              <Button variant="outline" onClick={() => setStep(3)} disabled={submitting}>
-                Back
-              </Button>
+              {stepOffset(-1) !== null && (
+                <Button variant="outline" onClick={() => setStep(stepOffset(-1)!)} disabled={submitting}>
+                  Back
+                </Button>
+              )}
               <Button onClick={handleSubmit} disabled={submitting}>
                 {submitting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
-                Create Proposal
+                {submitLabel}
               </Button>
             </CardFooter>
           </>
@@ -498,10 +590,23 @@ export function ProposalForm() {
 
         {step !== 4 && (
           <CardFooter className="justify-between">
-            <Button variant="outline" onClick={() => setStep((s) => s - 1)} disabled={step === 1}>
+            <Button
+              variant="outline"
+              onClick={() => {
+                const prev = stepOffset(-1);
+                if (prev !== null) setStep(prev);
+              }}
+              disabled={stepOffset(-1) === null}
+            >
               <ChevronLeft size={16} className="mr-1" /> Back
             </Button>
-            <Button onClick={() => setStep((s) => s + 1)} disabled={!canProceed}>
+            <Button
+              onClick={() => {
+                const next = stepOffset(1);
+                if (next !== null) setStep(next);
+              }}
+              disabled={!canProceed || stepOffset(1) === null}
+            >
               Next <ChevronRight size={16} className="ml-1" />
             </Button>
           </CardFooter>

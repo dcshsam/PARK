@@ -5,6 +5,9 @@ const SPARC_MENTORS_KEY = "prop-review:sparc-mentors";
 const GTM_OWNERS_KEY = "prop-review:gtm-owners";
 const PROPOSAL_REVIEWERS_KEY = "prop-review:proposal-reviewers";
 const PROPOSAL_REGIONS_KEY = "prop-review:proposal-regions";
+const LEAD_STATUSES_KEY = "prop-review:lead-statuses";
+const LEAD_VERTICALS_KEY = "prop-review:lead-verticals";
+const LEAD_TYPES_KEY = "prop-review:lead-types";
 
 export const DEFAULT_TECHNOLOGIES: string[] = [];
 
@@ -29,6 +32,24 @@ export const DEFAULT_PROPOSAL_REGIONS: string[] = [
   "Asia Pacific",
   "Latin America",
   "Middle East & Africa",
+];
+
+export const DEFAULT_LEAD_STATUSES: string[] = ["Hot", "Warm", "Cold"];
+
+export const DEFAULT_LEAD_VERTICALS: string[] = [
+  "SAP",
+  "Non-SAP",
+  "Digital",
+  "Cloud",
+  "Data & AI",
+];
+
+export const DEFAULT_LEAD_TYPES: string[] = [
+  "Solution",
+  "Capability showcase",
+  "Assessment",
+  "Consulting",
+  "Proposal",
 ];
 
 function getList(key: string, defaults: string[]): string[] {
@@ -107,4 +128,28 @@ export function getProposalRegions(): string[] {
 
 export function saveProposalRegions(regions: string[]): void {
   saveList(PROPOSAL_REGIONS_KEY, regions);
+}
+
+export function getLeadStatuses(): string[] {
+  return getList(LEAD_STATUSES_KEY, DEFAULT_LEAD_STATUSES);
+}
+
+export function saveLeadStatuses(statuses: string[]): void {
+  saveList(LEAD_STATUSES_KEY, statuses);
+}
+
+export function getLeadVerticals(): string[] {
+  return getList(LEAD_VERTICALS_KEY, DEFAULT_LEAD_VERTICALS);
+}
+
+export function saveLeadVerticals(verticals: string[]): void {
+  saveList(LEAD_VERTICALS_KEY, verticals);
+}
+
+export function getLeadTypes(): string[] {
+  return getList(LEAD_TYPES_KEY, DEFAULT_LEAD_TYPES);
+}
+
+export function saveLeadTypes(types: string[]): void {
+  saveList(LEAD_TYPES_KEY, types);
 }

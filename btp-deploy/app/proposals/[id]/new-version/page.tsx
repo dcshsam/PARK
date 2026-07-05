@@ -6,6 +6,7 @@ import {
   getProposal,
   addDocument,
   addWorkflowEvent,
+  getActiveProfile,
   saveDeepReview,
   getActiveDeepRules,
 } from "@/lib/db";
@@ -13,7 +14,7 @@ import { startNewVersionCycle } from "@/lib/workflow-engine";
 import { extractFinalProposalAndContext, extractAllDocumentText } from "@/lib/deep-review/extract";
 import { runDeepReview } from "@/lib/deep-review/engine";
 import { getDefaultStrictness } from "@/lib/deep-review/settings";
-import type { Proposal, UploadedFile, DocumentCategory } from "@/lib/types";
+import type { Proposal, UploadedFile, ProposalDocumentCategory } from "@/lib/types";
 import { categoryLabels, statusLabels } from "@/lib/types";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -21,8 +22,9 @@ import { Badge } from "@/components/ui/badge";
 import { AlertCircle, ArrowLeft, Loader2, Sparkles, Upload, CheckCircle2 } from "lucide-react";
 import { FileUpload } from "@/components/file-upload";
 import { ManualTextInput } from "@/components/manual-text-input";
+import { useProposalBackTarget } from "@/lib/use-proposal-back-target";
 
-const uploadCategories: DocumentCategory[] = ["rfp", "transcript", "customer_doc", "final_proposal"];
+const uploadCategories: ProposalDocumentCategory[] = ["rfp", "transcript", "customer_doc", "final_proposal"];
 
 type Step = "upload" | "processing" | "reviewing" | "done" | "error";
 
@@ -34,9 +36,10 @@ export default function NewVersionPage() {
   const [proposal, setProposal] = useState<Proposal | null>(null);
   const [loading, setLoading] = useState(true);
   const [step, setStep] = useState<Step>("upload");
+  const backTarget = useProposalBackTarget(id);
   const [error, setError] = useState<string | null>(null);
   const [pendingDocs, setPendingDocs] = useState<
-    Record<DocumentCategory, Omit<UploadedFile, "id" | "proposalId" | "uploadedAt">[]>
+    Record<ProposalDocumentCategory, Omit<UploadedFile, "id" | "proposalId" | "uploadedAt">[]>
   >({
     rfp: [],
     transcript: [],
@@ -54,7 +57,7 @@ export default function NewVersionPage() {
   }, [id]);
 
   const updatePending = (
-    category: DocumentCategory,
+    category: ProposalDocumentCategory,
     files: Omit<UploadedFile, "id" | "proposalId" | "uploadedAt">[]
   ) => {
     setPendingDocs((prev) => ({ ...prev, [category]: files }));
@@ -78,11 +81,12 @@ export default function NewVersionPage() {
       }
 
       if (allNew.length > 0) {
+        const profile = await getActiveProfile();
         await addWorkflowEvent({
           proposalId: proposal.id,
           cycleId: cycle.id,
           type: "document_uploaded",
-          actor: "John Doe",
+          actor: profile?.name ?? "Unknown User",
           note: `${allNew.length} new document(s) uploaded as version 1 of ${cycle.cycleType} cycle iteration ${cycle.iteration}`,
           createdAt: new Date(),
         });
@@ -186,8 +190,8 @@ export default function NewVersionPage() {
     <div className="space-y-6">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex items-center gap-3">
-          <Button variant="outline" size="sm" onClick={() => router.push(`/proposals/${id}`)}>
-            <ArrowLeft size={16} className="mr-1" /> Back
+          <Button variant="outline" size="sm" onClick={() => router.push(backTarget.href)}>
+            <ArrowLeft size={16} className="mr-1" /> {backTarget.label}
           </Button>
           <div>
             <h1 className="text-2xl font-bold text-text-primary sm:text-3xl">Upload New Version</h1>

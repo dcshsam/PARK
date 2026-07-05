@@ -45,6 +45,62 @@ const categoryStyles: Record<
     iconColor: "text-final-proposal-600",
     badge: "bg-final-proposal-100 text-final-proposal-700",
   },
+  lead_mail: {
+    label: "Mail",
+    border: "border-status-info-text hover:border-status-info-text dark:border-status-info-text/30 dark:hover:border-status-info-text/70",
+    bg: "bg-status-info-bg",
+    iconColor: "text-status-info-text",
+    badge: "bg-status-info-bg text-status-info-text",
+  },
+  lead_mom: {
+    label: "Minutes of Meeting",
+    border: "border-status-warning-text hover:border-status-warning-text dark:border-status-warning-text/30 dark:hover:border-status-warning-text/70",
+    bg: "bg-status-warning-bg",
+    iconColor: "text-status-warning-text",
+    badge: "bg-status-warning-bg text-status-warning-text",
+  },
+  lead_discussion: {
+    label: "Discussion Notes",
+    border: "border-status-danger-text hover:border-status-danger-text dark:border-status-danger-text/30 dark:hover:border-status-danger-text/70",
+    bg: "bg-status-danger-bg",
+    iconColor: "text-status-danger-text",
+    badge: "bg-status-danger-bg text-status-danger-text",
+  },
+  lead_pre_qual_form: {
+    label: "Pre-Qualification Form",
+    border: "border-status-info-text hover:border-status-info-text dark:border-status-info-text/30 dark:hover:border-status-info-text/70",
+    bg: "bg-status-info-bg",
+    iconColor: "text-status-info-text",
+    badge: "bg-status-info-bg text-status-info-text",
+  },
+  lead_due_diligence: {
+    label: "Due Diligence Document",
+    border: "border-primary-500 hover:border-primary-500 dark:border-primary-500/30 dark:hover:border-primary-500/70",
+    bg: "bg-primary-50",
+    iconColor: "text-primary-600",
+    badge: "bg-primary-100 text-primary-700",
+  },
+  lead_proposal: {
+    label: "Proposal Document",
+    border: "border-status-success-text hover:border-status-success-text dark:border-status-success-text/30 dark:hover:border-status-success-text/70",
+    bg: "bg-status-success-bg",
+    iconColor: "text-status-success-text",
+    badge: "bg-status-success-bg text-status-success-text",
+  },
+  lead_customer_doc: {
+    label: "Customer Document (RFP / Requirement Summary)",
+    border: "border-customer-200 hover:border-customer-500 dark:border-customer-200/30 dark:hover:border-customer-500/70",
+    bg: "bg-customer-50",
+    iconColor: "text-customer-600",
+    badge: "bg-customer-100 text-customer-700",
+  },
+  lead_final_deck: {
+    label: "Final Pitch Deck",
+    border: "border-final-proposal-200 hover:border-final-proposal-500 dark:border-final-proposal-200/30 dark:hover:border-final-proposal-500/70",
+    bg: "bg-final-proposal-50",
+    iconColor: "text-final-proposal-600",
+    badge: "bg-final-proposal-100 text-final-proposal-700",
+  },
 };
 
 async function extractTextFromBase64(base64: string, file: File): Promise<string> {

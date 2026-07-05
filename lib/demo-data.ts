@@ -1,6 +1,7 @@
-import type { Proposal, UploadedFile, Comment, WorkflowCycle, WorkflowEvent, TeamActivity } from "./types";
+import type { Proposal, UploadedFile, Comment, WorkflowCycle, WorkflowEvent, TeamActivity, Lead } from "./types";
 
 const now = new Date();
+const DAY = 86400000;
 
 function doc(
   proposalId: string,
@@ -91,7 +92,119 @@ function teamActivity(
   };
 }
 
-export function seedDemoData(): { proposals: Proposal[]; teamActivities: TeamActivity[] } {
+// ── Sample leads (Proposal Master) ──────────────────────────────────────────
+
+interface SampleLeadOpts {
+  name: string;
+  kytesId: string;
+  client: string;
+  gtm: string;
+  vertical: string;
+  type: string;
+  region: string;
+  mentor?: string;
+  reviewer?: string;
+  hg: "Hot" | "Warm" | "Cold";
+  receivedVia?: Lead["receivedVia"];
+  status: Lead["status"];
+  /** Current event (1-8) the lead has reached. */
+  event: number;
+  createdDaysAgo: number;
+  summary: string;
+  pitchResponse?: "awaiting" | "accepted" | "revision_requested" | "declined";
+  retroOutcome?: "won" | "lost" | "on_hold";
+}
+
+function sampleLead(opts: SampleLeadOpts): Lead {
+  const createdAt = new Date(now.getTime() - opts.createdDaysAgo * DAY);
+  // Space the completed-event checkpoints evenly across the lead's lifetime.
+  const step = Math.max(1, Math.floor(opts.createdDaysAgo / (opts.event + 1)));
+  const eventDate = (n: number) => new Date(createdAt.getTime() + n * step * DAY);
+
+  const eventData: Record<string, unknown> = {};
+  // Events 1-4 record completedAt checkpoints as they are passed.
+  for (let n = 1; n <= Math.min(opts.event - 1, 4); n++) {
+    eventData[`event${n}`] = { completedAt: eventDate(n) };
+  }
+  // Event 7 — Customer Pitch & Feedback (recorded once the lead reaches Event 8).
+  if (opts.event >= 8) {
+    const pitchDate = eventDate(6);
+    eventData.event7 = {
+      startDate: pitchDate.toISOString().split("T")[0],
+      endDate: new Date(pitchDate.getTime() + DAY).toISOString().split("T")[0],
+      mode: "hybrid",
+      presentedBy: opts.mentor ?? opts.gtm,
+      attendees: "CIO, Head of Procurement",
+      meetingFeedback: "Pitch went well; pricing and timeline questions dominated the discussion.",
+      response: opts.pitchResponse ?? "awaiting",
+      responseNotes: "Customer to confirm after internal budget review.",
+      nextSteps: "Share revised commercial annexure and reference case studies.",
+      completedAt: eventDate(7),
+    };
+  }
+  // Event 8 — Proposal Retro & Wrap for decided leads.
+  if (opts.retroOutcome) {
+    eventData.event8 = {
+      outcome: opts.retroOutcome,
+      wentWell: "Strong discovery notes and quick review turnarounds.",
+      improve: "Start numerical validation earlier in the cycle.",
+      learnings: "Reusable estimation template captured for the next pursuit.",
+      completedAt: eventDate(8),
+    };
+  }
+
+  return {
+    id: crypto.randomUUID(),
+    leadName: opts.name,
+    kytesId: opts.kytesId,
+    receivedVia: opts.receivedVia ?? "email",
+    hgStatus: opts.hg,
+    date: createdAt,
+    gtmName: opts.gtm,
+    vertical: opts.vertical,
+    leadType: opts.type,
+    requirementSummary: opts.summary,
+    clientName: opts.client,
+    sparcMentor: opts.mentor,
+    proposalReviewer: opts.reviewer,
+    proposalRegion: opts.region,
+    documents: [],
+    status: opts.status,
+    currentEvent: opts.event,
+    eventData,
+    createdAt,
+    updatedAt: new Date(now.getTime() - Math.min(opts.createdDaysAgo, 3) * DAY + 3600000),
+  };
+}
+
+function seedDemoLeads(): Lead[] {
+  return [
+    sampleLead({ name: "S/4HANA Greenfield Rollout", kytesId: "KYT-1001", client: "Acme Corporation", gtm: "Mark Liu", vertical: "SAP", type: "Solution", region: "North America", mentor: "Jane Doe", reviewer: "Sumit Kumar", hg: "Hot", status: "converted", event: 8, createdDaysAgo: 90, summary: "Full greenfield S/4HANA implementation across three plants.", pitchResponse: "accepted", retroOutcome: "won" }),
+    sampleLead({ name: "Managed Cloud Ops Retainer", kytesId: "KYT-1002", client: "Globex Industries", gtm: "Priya Nair", vertical: "Cloud", type: "Consulting", region: "Europe", mentor: "Carlos Rivera", reviewer: "Pratyush Raul", hg: "Hot", status: "converted", event: 8, createdDaysAgo: 75, summary: "24/7 managed operations for AWS and Azure production workloads.", pitchResponse: "accepted", retroOutcome: "won" }),
+    sampleLead({ name: "Legacy CRM Replacement", kytesId: "KYT-1003", client: "Initech LLC", gtm: "Tom Nguyen", vertical: "Non-SAP", type: "Proposal", region: "North America", mentor: "Lisa Chen", hg: "Warm", status: "dropped", event: 8, createdDaysAgo: 60, summary: "Replace on-premise CRM with a composable cloud suite.", pitchResponse: "declined", retroOutcome: "lost" }),
+    sampleLead({ name: "Retail Analytics Platform", kytesId: "KYT-1004", client: "Duff Retail Group", gtm: "Sofia Marquez", vertical: "Data & AI", type: "Solution", region: "Latin America", mentor: "Aisha Patel", reviewer: "Sumit Kumar", hg: "Hot", status: "converted", event: 8, createdDaysAgo: 55, summary: "Customer-360 analytics with demand forecasting models.", pitchResponse: "accepted", retroOutcome: "won" }),
+    sampleLead({ name: "BTP Integration Suite Pilot", kytesId: "KYT-1005", client: "Stark Enterprises", gtm: "Mark Liu", vertical: "SAP", type: "Capability showcase", region: "Asia Pacific", mentor: "Jane Doe", reviewer: "Pratyush Raul", hg: "Hot", status: "proposal", event: 7, createdDaysAgo: 40, summary: "Integration suite pilot connecting SuccessFactors and S/4.", pitchResponse: "awaiting" }),
+    sampleLead({ name: "Digital Banking Experience", kytesId: "KYT-1006", client: "Wayne Financial", gtm: "Ahmed Hassan", vertical: "Digital", type: "Solution", region: "Middle East & Africa", mentor: "Lisa Chen", reviewer: "Sumit Kumar", hg: "Hot", status: "proposal", event: 7, createdDaysAgo: 45, summary: "Mobile-first digital banking with open banking APIs." }),
+    sampleLead({ name: "SAP AMS Transition", kytesId: "KYT-1007", client: "Umbrella Health", gtm: "Priya Nair", vertical: "SAP", type: "Consulting", region: "Europe", mentor: "Carlos Rivera", hg: "Warm", status: "proposal", event: 6, createdDaysAgo: 35, summary: "AMS transition covering ECC, BW and Fiori landscapes." }),
+    sampleLead({ name: "Warehouse Automation Assessment", kytesId: "KYT-1008", client: "Nakatomi Trading", gtm: "Tom Nguyen", vertical: "SAP", type: "Assessment", region: "Asia Pacific", mentor: "Aisha Patel", reviewer: "Pratyush Raul", hg: "Warm", status: "proposal", event: 6, createdDaysAgo: 30, summary: "EWM fit-gap assessment for two distribution centers." }),
+    sampleLead({ name: "GenAI Contract Intelligence", kytesId: "KYT-1009", client: "Vandelay Industries", gtm: "Sofia Marquez", vertical: "Data & AI", type: "Capability showcase", region: "North America", mentor: "Jane Doe", hg: "Hot", status: "proposal", event: 5, createdDaysAgo: 25, summary: "LLM-based contract clause extraction and risk scoring demo." }),
+    sampleLead({ name: "Hybrid Cloud Landing Zone", kytesId: "KYT-1010", client: "Cyberdyne Systems", gtm: "Mark Liu", vertical: "Cloud", type: "Solution", region: "North America", mentor: "Carlos Rivera", reviewer: "Sumit Kumar", hg: "Hot", status: "proposal", event: 5, createdDaysAgo: 28, summary: "Secure landing zone with policy-as-code guardrails." }),
+    sampleLead({ name: "Field Service Mobility", kytesId: "KYT-1011", client: "Aperture Utilities", gtm: "Ahmed Hassan", vertical: "Digital", type: "Solution", region: "Middle East & Africa", mentor: "Lisa Chen", hg: "Warm", status: "proposal", event: 5, createdDaysAgo: 22, summary: "Offline-capable field service app for 800 technicians." }),
+    sampleLead({ name: "Finance Process Mining", kytesId: "KYT-1012", client: "Gringotts Capital", gtm: "Priya Nair", vertical: "Data & AI", type: "Assessment", region: "Europe", mentor: "Aisha Patel", hg: "Warm", status: "proposal", event: 4, createdDaysAgo: 18, summary: "P2P and O2C process mining with remediation roadmap." }),
+    sampleLead({ name: "Sustainability Reporting (CSRD)", kytesId: "KYT-1013", client: "Wonka Foods", gtm: "Sofia Marquez", vertical: "SAP", type: "Consulting", region: "Europe", mentor: "Jane Doe", reviewer: "Pratyush Raul", hg: "Warm", status: "qualified", event: 4, createdDaysAgo: 15, summary: "CSRD-aligned sustainability reporting on SAP Sustainability Control Tower." }),
+    sampleLead({ name: "Supply Chain Control Tower", kytesId: "KYT-1014", client: "Tyrell Logistics", gtm: "Tom Nguyen", vertical: "SAP", type: "Solution", region: "Asia Pacific", mentor: "Carlos Rivera", hg: "Hot", status: "qualified", event: 3, createdDaysAgo: 12, summary: "Real-time supply chain visibility across 14 markets." }),
+    sampleLead({ name: "Customer Data Platform PoC", kytesId: "KYT-1015", client: "Hooli Media", gtm: "Mark Liu", vertical: "Digital", type: "Capability showcase", region: "North America", mentor: "Lisa Chen", hg: "Warm", status: "qualified", event: 3, createdDaysAgo: 10, summary: "CDP proof of concept unifying web, app and CRM signals.", receivedVia: "meeting" }),
+    sampleLead({ name: "ERP Health Check", kytesId: "KYT-1016", client: "Soylent Foods", gtm: "Priya Nair", vertical: "SAP", type: "Assessment", region: "Latin America", mentor: "Aisha Patel", hg: "Cold", status: "qualified", event: 2, createdDaysAgo: 8, summary: "Performance and custom-code health check for ECC 6.0." }),
+    sampleLead({ name: "Data Lakehouse Modernization", kytesId: "KYT-1017", client: "Massive Dynamic", gtm: "Sofia Marquez", vertical: "Data & AI", type: "Solution", region: "North America", mentor: "Jane Doe", hg: "Warm", status: "new", event: 2, createdDaysAgo: 6, summary: "Migrate Hadoop estate to a governed lakehouse architecture.", receivedVia: "meeting" }),
+    sampleLead({ name: "Commerce Replatforming", kytesId: "KYT-1018", client: "Pied Piper Retail", gtm: "Ahmed Hassan", vertical: "Digital", type: "Proposal", region: "Middle East & Africa", hg: "Cold", status: "new", event: 1, createdDaysAgo: 4, summary: "Headless commerce replatform with composable storefront." }),
+    sampleLead({ name: "HR Cloud Transformation", kytesId: "KYT-1019", client: "Oscorp Industries", gtm: "Tom Nguyen", vertical: "SAP", type: "Solution", region: "Asia Pacific", hg: "Warm", status: "new", event: 1, createdDaysAgo: 2, summary: "SuccessFactors suite rollout for 12,000 employees.", receivedVia: "other" }),
+    sampleLead({ name: "Predictive Maintenance AI", kytesId: "KYT-1020", client: "Sirius Cybernetics", gtm: "Mark Liu", vertical: "Data & AI", type: "Capability showcase", region: "Europe", mentor: "Carlos Rivera", hg: "Warm", status: "on_hold", event: 8, createdDaysAgo: 50, summary: "IoT-driven predictive maintenance for turbine fleet.", pitchResponse: "revision_requested", retroOutcome: "on_hold" }),
+    sampleLead({ name: "Procurement Spend Analytics", kytesId: "KYT-1021", client: "Initrode Global", gtm: "Priya Nair", vertical: "Data & AI", type: "Assessment", region: "Europe", mentor: "Aisha Patel", hg: "Cold", status: "on_hold", event: 4, createdDaysAgo: 20, summary: "Ariba spend classification and savings opportunity analysis." }),
+    sampleLead({ name: "Plant Maintenance Mobile Rollout", kytesId: "KYT-1022", client: "Buy n Large Mfg", gtm: "Sofia Marquez", vertical: "SAP", type: "Solution", region: "Latin America", hg: "Cold", status: "dropped", event: 3, createdDaysAgo: 26, summary: "Asset Manager rollout paused after budget freeze." }),
+  ];
+}
+
+export function seedDemoData(): { proposals: Proposal[]; teamActivities: TeamActivity[]; leads: Lead[] } {
   const p1Id = crypto.randomUUID();
   const p2Id = crypto.randomUUID();
   const p3Id = crypto.randomUUID();
@@ -307,5 +420,6 @@ export function seedDemoData(): { proposals: Proposal[]; teamActivities: TeamAct
     },
     ],
     teamActivities: activities,
+    leads: seedDemoLeads(),
   };
 }

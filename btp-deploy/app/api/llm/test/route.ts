@@ -1,34 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
-import { type LlmConfig, isLlmProvider } from "@/lib/llm/types";
+import { type LlmConfig } from "@/lib/llm/types";
 import { testLlmConnection } from "@/lib/llm/service";
+import { resolveRequestConfig } from "@/lib/llm/server-config";
 
 export async function POST(request: NextRequest) {
   try {
     const body = (await request.json()) as Partial<LlmConfig>;
-
-    const provider = body.provider && isLlmProvider(body.provider) ? body.provider : "claude";
-
-    const config: LlmConfig = {
-      provider,
-      claude: {
-        apiKey: body.claude?.apiKey ?? "",
-        model: body.claude?.model ?? "claude-haiku-4-5",
-      },
-      kimi: {
-        apiKey: body.kimi?.apiKey ?? "",
-        model: body.kimi?.model ?? "moonshot-v1-8k",
-        baseUrl: body.kimi?.baseUrl ?? "https://api.moonshot.cn/v1",
-      },
-      sapAiCore: {
-        authUrl: body.sapAiCore?.authUrl ?? "",
-        clientId: body.sapAiCore?.clientId ?? "",
-        clientSecret: body.sapAiCore?.clientSecret ?? "",
-        baseUrl: body.sapAiCore?.baseUrl ?? "",
-        resourceGroup: body.sapAiCore?.resourceGroup ?? "default",
-        deploymentId: body.sapAiCore?.deploymentId ?? "",
-        model: body.sapAiCore?.model ?? "",
-      },
-    };
+    // Fall back to the server env config per field (same as the chat route) so
+    // the connection test reflects what the chat route will actually use.
+    const config = resolveRequestConfig(body);
 
     const result = await testLlmConnection(config);
     return NextResponse.json(result);

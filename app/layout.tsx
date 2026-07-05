@@ -4,6 +4,7 @@ import "./globals.css";
 import { Shell } from "@/components/layout/shell";
 import { ThemeProvider } from "@/components/theme-provider";
 import { ProfileProvider } from "@/components/profile-provider";
+import { InlineScript } from "@/components/inline-script";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -42,8 +43,10 @@ export default function RootLayout({
       suppressHydrationWarning
       data-scroll-behavior="smooth"
     >
+      <head>
+        <InlineScript id="theme-script" html={themeScript} />
+      </head>
       <body className="min-h-full bg-background text-foreground">
-        <script async dangerouslySetInnerHTML={{ __html: themeScript }} />
         <ThemeProvider>
           <ProfileProvider>
             <Shell>{children}</Shell>

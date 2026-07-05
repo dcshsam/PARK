@@ -243,7 +243,7 @@ export function ProposalsPageInner() {
                 exit={{ opacity: 0, scale: 0.96 }}
                 transition={{ duration: 0.25, delay: i * 0.04 }}
               >
-                <Card className="group flex h-full flex-col overflow-hidden border border-border bg-surface/80 backdrop-blur-sm transition-all hover:border-primary-200 hover:shadow-lg">
+                <Card className="group flex h-full flex-col overflow-hidden border border-border bg-surface/95 backdrop-blur-sm transition-all hover:border-primary-200 hover:shadow-lg">
                   <CardContent className="flex flex-1 flex-col p-5">
                     <div className="mb-3 flex items-start justify-between gap-3">
                       <Badge variant={proposal.status}>{statusLabels[proposal.status]}</Badge>
@@ -316,7 +316,7 @@ export function ProposalsPageInner() {
                 exit={{ opacity: 0, scale: 0.96 }}
                 transition={{ duration: 0.25, delay: i * 0.04 }}
               >
-                <Card className="group overflow-hidden border border-border bg-surface/80 backdrop-blur-sm transition-all hover:border-primary-200 hover:shadow-lg">
+                <Card className="group overflow-hidden border border-border bg-surface/95 backdrop-blur-sm transition-all hover:border-primary-200 hover:shadow-lg">
                   <CardContent className="p-4 sm:p-5">
                     <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
                       <div className="min-w-0 flex-1">
@@ -390,7 +390,7 @@ function StatCard({
   gradient: string;
 }) {
   return (
-    <Card className="relative overflow-hidden border border-border bg-surface/80 transition-all hover:shadow-md">
+    <Card className="relative overflow-hidden border border-border bg-surface/95 transition-all hover:shadow-md">
       <div className={cn("absolute left-0 top-0 h-full w-1 bg-gradient-to-b", gradient)} />
       <CardContent className="flex items-center justify-between p-4">
         <div>
