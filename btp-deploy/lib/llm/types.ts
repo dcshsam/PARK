@@ -46,6 +46,8 @@ export interface LlmChatRequest {
   messages: LlmChatMessage[];
   temperature?: number;
   maxTokens?: number;
+  /** When true, /api/llm/chat responds with a plain-text stream of deltas instead of JSON. */
+  stream?: boolean;
 }
 
 export interface LlmChatResponse {

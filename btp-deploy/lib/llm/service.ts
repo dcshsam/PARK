@@ -46,6 +46,63 @@ export async function chatWithLlm(
   }
 }
 
+/**
+ * Streaming variant of chatWithLlm: resolves to a stream of UTF-8 text deltas.
+ * Lets the Jarvis voice agent start speaking before the reply finishes.
+ * SAP AI Core deployments vary in SSE support, so that provider emits the
+ * complete reply as a single chunk instead.
+ */
+export async function chatWithLlmStream(
+  config: LlmConfig,
+  messages: LlmChatMessage[],
+  temperature = 0.7,
+  maxTokens = 1024
+): Promise<ReadableStream<Uint8Array>> {
+  switch (config.provider) {
+    case "claude":
+      return chatClaudeStream(config.claude, messages, temperature, maxTokens);
+    case "kimi":
+      return chatKimiStream(config.kimi, messages, temperature, maxTokens);
+    case "sap-ai-core": {
+      const full = await chatSapAiCore(config.sapAiCore, messages, temperature, maxTokens);
+      return new Response(full.content).body as ReadableStream<Uint8Array>;
+    }
+    default:
+      throw new Error("Unknown provider");
+  }
+}
+
+/** Re-emit an SSE body as plain text, keeping only the deltas `extract` finds. */
+function sseTextStream(
+  body: ReadableStream<Uint8Array>,
+  extract: (event: Record<string, unknown>) => string | undefined
+): ReadableStream<Uint8Array> {
+  const decoder = new TextDecoder();
+  const encoder = new TextEncoder();
+  let buffer = "";
+  return body.pipeThrough(
+    new TransformStream<Uint8Array, Uint8Array>({
+      transform(chunk, controller) {
+        buffer += decoder.decode(chunk, { stream: true });
+        let newline: number;
+        while ((newline = buffer.indexOf("\n")) !== -1) {
+          const line = buffer.slice(0, newline).trim();
+          buffer = buffer.slice(newline + 1);
+          if (!line.startsWith("data:")) continue;
+          const data = line.slice(5).trim();
+          if (data === "[DONE]") continue;
+          try {
+            const text = extract(JSON.parse(data) as Record<string, unknown>);
+            if (text) controller.enqueue(encoder.encode(text));
+          } catch {
+            // keep-alive / partial lines — skip
+          }
+        }
+      },
+    })
+  );
+}
+
 async function testClaude(config: LlmConfig["claude"]): Promise<LlmTestResult> {
   if (!config.apiKey) {
     return { ok: false, provider: "claude", error: "Anthropic API key is required" };
@@ -85,12 +142,13 @@ async function testClaude(config: LlmConfig["claude"]): Promise<LlmTestResult> {
   }
 }
 
-async function chatClaude(
+async function requestClaude(
   config: LlmConfig["claude"],
   messages: LlmChatMessage[],
   temperature: number,
-  maxTokens: number
-): Promise<LlmChatResponse> {
+  maxTokens: number,
+  stream: boolean
+): Promise<Response> {
   if (!config.apiKey) throw new Error("Anthropic API key is required");
 
   const systemMessages = messages.filter((m) => m.role === "system");
@@ -102,6 +160,10 @@ async function chatClaude(
     max_tokens: maxTokens,
     messages: nonSystemMessages.map((m) => ({ role: m.role, content: m.content })),
   };
+
+  if (stream) {
+    requestBody.stream = true;
+  }
 
   if (claudeSupportsTemperature(model)) {
     requestBody.temperature = temperature;
@@ -126,6 +188,16 @@ async function chatClaude(
     throw new Error(body.error?.message ?? `Anthropic returned ${res.status}`);
   }
 
+  return res;
+}
+
+async function chatClaude(
+  config: LlmConfig["claude"],
+  messages: LlmChatMessage[],
+  temperature: number,
+  maxTokens: number
+): Promise<LlmChatResponse> {
+  const res = await requestClaude(config, messages, temperature, maxTokens, false);
   const body = await res.json();
   return {
     content: body.content?.[0]?.text ?? "",
@@ -134,6 +206,21 @@ async function chatClaude(
       outputTokens: body.usage?.output_tokens,
     },
   };
+}
+
+async function chatClaudeStream(
+  config: LlmConfig["claude"],
+  messages: LlmChatMessage[],
+  temperature: number,
+  maxTokens: number
+): Promise<ReadableStream<Uint8Array>> {
+  const res = await requestClaude(config, messages, temperature, maxTokens, true);
+  if (!res.body) throw new Error("Anthropic returned no response body");
+  return sseTextStream(res.body, (event) => {
+    if (event.type !== "content_block_delta") return undefined;
+    const delta = event.delta as { type?: string; text?: string } | undefined;
+    return delta?.type === "text_delta" ? delta.text : undefined;
+  });
 }
 
 const KIMI_CN_BASE_URL = "https://api.moonshot.cn/v1";
@@ -206,12 +293,13 @@ async function testKimi(config: LlmConfig["kimi"]): Promise<LlmTestResult> {
   }
 }
 
-async function chatKimi(
+async function requestKimi(
   config: LlmConfig["kimi"],
   messages: LlmChatMessage[],
   temperature: number,
-  maxTokens: number
-): Promise<LlmChatResponse> {
+  maxTokens: number,
+  stream: boolean
+): Promise<Response> {
   const apiKey = config.apiKey?.trim();
   if (!apiKey) throw new Error("Kimi API key is required");
 
@@ -227,6 +315,7 @@ async function chatKimi(
       max_tokens: maxTokens,
       temperature,
       messages,
+      ...(stream ? { stream: true } : {}),
     }),
   });
 
@@ -235,6 +324,16 @@ async function chatKimi(
     throw new Error(body.error?.message ?? `Kimi returned ${res.status}`);
   }
 
+  return res;
+}
+
+async function chatKimi(
+  config: LlmConfig["kimi"],
+  messages: LlmChatMessage[],
+  temperature: number,
+  maxTokens: number
+): Promise<LlmChatResponse> {
+  const res = await requestKimi(config, messages, temperature, maxTokens, false);
   const body = await res.json();
   return {
     content: body.choices?.[0]?.message?.content ?? "",
@@ -245,9 +344,32 @@ async function chatKimi(
   };
 }
 
+async function chatKimiStream(
+  config: LlmConfig["kimi"],
+  messages: LlmChatMessage[],
+  temperature: number,
+  maxTokens: number
+): Promise<ReadableStream<Uint8Array>> {
+  const res = await requestKimi(config, messages, temperature, maxTokens, true);
+  if (!res.body) throw new Error("Kimi returned no response body");
+  return sseTextStream(res.body, (event) => {
+    const choices = event.choices as Array<{ delta?: { content?: string } }> | undefined;
+    return choices?.[0]?.delta?.content ?? undefined;
+  });
+}
+
+// OAuth tokens are valid for a while (expires_in) — cache per credential so a
+// Jarvis turn doesn't pay a token round-trip on every single LLM call.
+let sapTokenCache: { key: string; token: string; expiresAt: number } | null = null;
+
 async function getSapAiCoreToken(config: LlmConfig["sapAiCore"]): Promise<string> {
   if (!config.authUrl || !config.clientId || !config.clientSecret) {
     throw new Error("SAP AI Core auth URL, client ID, and client secret are required");
+  }
+
+  const cacheKey = `${config.authUrl}|${config.clientId}`;
+  if (sapTokenCache && sapTokenCache.key === cacheKey && Date.now() < sapTokenCache.expiresAt) {
+    return sapTokenCache.token;
   }
 
   const params = new URLSearchParams();
@@ -267,8 +389,11 @@ async function getSapAiCoreToken(config: LlmConfig["sapAiCore"]): Promise<string
     throw new Error(`SAP AI Core token request failed (${res.status}): ${text}`);
   }
 
-  const body = (await res.json()) as { access_token?: string };
+  const body = (await res.json()) as { access_token?: string; expires_in?: number };
   if (!body.access_token) throw new Error("SAP AI Core token response missing access_token");
+  // Refresh a minute early; fall back to 5 minutes if no expiry is given.
+  const ttlMs = Math.max(((body.expires_in ?? 300) - 60) * 1000, 60_000);
+  sapTokenCache = { key: cacheKey, token: body.access_token, expiresAt: Date.now() + ttlMs };
   return body.access_token;
 }
 

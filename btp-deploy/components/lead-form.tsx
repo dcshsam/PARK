@@ -181,6 +181,22 @@ type LeadFormProps = {
   lead?: Lead;
 };
 
+/**
+ * One-shot prefill left by the Jarvis assistant's create_lead_draft tool.
+ * Read (and cleared) only when creating a new lead.
+ */
+function consumeJarvisLeadDraft(): { leadName?: string; clientName?: string; requirementSummary?: string } {
+  if (typeof window === "undefined") return {};
+  try {
+    const raw = window.sessionStorage.getItem("jarvis:lead-draft");
+    if (!raw) return {};
+    window.sessionStorage.removeItem("jarvis:lead-draft");
+    return JSON.parse(raw) as { leadName?: string; clientName?: string; requirementSummary?: string };
+  } catch {
+    return {};
+  }
+}
+
 export function LeadForm({ lead }: LeadFormProps) {
   const router = useRouter();
   const { currentProfile } = useProfile();
@@ -309,6 +325,21 @@ export function LeadForm({ lead }: LeadFormProps) {
     retroImprove: event8Data.improve ?? "",
     retroLearnings: event8Data.learnings ?? "",
   });
+
+  // Applied post-mount (not in the initializer) to avoid a hydration mismatch.
+  useEffect(() => {
+    if (!isCreate) return;
+    Promise.resolve().then(() => {
+      const draft = consumeJarvisLeadDraft();
+      if (!draft.leadName && !draft.clientName && !draft.requirementSummary) return;
+      setForm((f) => ({
+        ...f,
+        leadName: draft.leadName || f.leadName,
+        clientName: draft.clientName || f.clientName,
+        requirementSummary: draft.requirementSummary || f.requirementSummary,
+      }));
+    });
+  }, [isCreate]);
 
   const statuses = useMemo(() => getLeadStatuses(), []);
   const verticals = useMemo(() => getLeadVerticals(), []);

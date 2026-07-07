@@ -30,6 +30,9 @@ import { ThemeToggle } from "@/components/theme-toggle";
 import { useProfile } from "@/components/profile-provider";
 import { roleLabels, type Action } from "@/lib/profiles/types";
 import { SapHeroBackground } from "@/components/sap-hero-background";
+import { JarvisProvider } from "@/components/jarvis/jarvis-provider";
+import { JarvisButton } from "@/components/jarvis/jarvis-button";
+import { JarvisPanel } from "@/components/jarvis/jarvis-panel";
 
 const navItems: { href: string; label: string; icon: React.ElementType; action?: Action }[] = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
@@ -91,6 +94,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
   };
 
   return (
+    <JarvisProvider>
     <div className="relative isolate flex min-h-full">
       {/* App-wide animated SAP background, fixed behind all chrome and content */}
       <SapHeroBackground className="fixed inset-0 z-0" />
@@ -289,7 +293,12 @@ export function Shell({ children }: { children: React.ReactNode }) {
           </div>
         </div>
       )}
+
+      {/* Jarvis voice assistant */}
+      <JarvisButton />
+      <JarvisPanel />
     </div>
+    </JarvisProvider>
   );
 }
 

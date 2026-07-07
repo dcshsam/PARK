@@ -14,6 +14,7 @@ import { seedDemoData } from "./demo-data";
 import type { DeepReview } from "./deep-review/types";
 import { BUILTIN_RULE_DEFAULTS, type DeepRule } from "./deep-review/builtin-rules";
 import { getActiveProfileId, type Profile } from "./profiles/types";
+import type { JarvisMessageRecord } from "./jarvis/types";
 
 type ProposalRecord = Omit<
   Proposal,
@@ -31,6 +32,7 @@ class ProposalDatabase extends Dexie {
   profiles!: EntityTable<Profile, "id">;
   teamActivities!: EntityTable<TeamActivity, "id">;
   leads!: EntityTable<Lead, "id">;
+  jarvisMessages!: EntityTable<JarvisMessageRecord, "id">;
 
   constructor() {
     super("ProposalReviewDB");
@@ -68,6 +70,10 @@ class ProposalDatabase extends Dexie {
     // v10: lead management (SPARC lead intake roadmap).
     this.version(10).stores({
       leads: "++id, kytesId, status, createdAt, updatedAt",
+    });
+    // v11: Jarvis voice assistant conversation log.
+    this.version(11).stores({
+      jarvisMessages: "++id, createdAt",
     });
   }
 }
@@ -738,6 +744,40 @@ export async function getDeepReviewMap(): Promise<Map<string, DeepReview>> {
     }
   }
   return map;
+}
+
+/**
+ * All documents that have extracted text, for client-side document Q&A
+ * (Jarvis ask_documents). Optionally scoped to one proposal.
+ */
+export async function getSearchableDocuments(proposalId?: string): Promise<UploadedFile[]> {
+  const db = getDb();
+  await seedIfEmpty();
+  const docs = proposalId
+    ? await db.documents.where("proposalId").equals(proposalId).toArray()
+    : await db.documents.toArray();
+  return docs.filter((d) => (d.extractedText ?? d.content ?? "").trim().length > 0);
+}
+
+// ── Jarvis conversation log ─────────────────────────────────────────────────
+
+export async function getJarvisMessages(limit = 50): Promise<JarvisMessageRecord[]> {
+  const db = getDb();
+  const records = await db.jarvisMessages.orderBy("createdAt").reverse().limit(limit).toArray();
+  return records.reverse().map((m) => ({ ...m, createdAt: new Date(m.createdAt) }));
+}
+
+export async function addJarvisMessage(
+  message: Omit<JarvisMessageRecord, "id">
+): Promise<JarvisMessageRecord> {
+  const db = getDb();
+  const id = (await db.jarvisMessages.add({ ...message })) as number;
+  return { ...message, id };
+}
+
+export async function clearJarvisMessages(): Promise<void> {
+  const db = getDb();
+  await db.jarvisMessages.clear();
 }
 
 export async function exportAll(): Promise<Record<string, unknown[]>> {
