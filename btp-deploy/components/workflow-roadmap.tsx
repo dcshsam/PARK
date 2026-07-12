@@ -1,6 +1,9 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { addDocument, getDeepReview } from "@/lib/db";
+import type { DeepReview } from "@/lib/deep-review/types";
+import { FileUpload } from "@/components/file-upload";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Textarea } from "@/components/ui/textarea";
@@ -23,7 +26,14 @@ import {
   getStageDurations,
   getTotalProposalDuration,
 } from "@/lib/workflow-utils";
-import type { Proposal, WorkflowStage, WorkflowEvent, WorkflowCycle, ReviewCycleType } from "@/lib/types";
+import type {
+  Proposal,
+  UploadedFile,
+  WorkflowStage,
+  WorkflowEvent,
+  WorkflowCycle,
+  ReviewCycleType,
+} from "@/lib/types";
 import { useProfile } from "@/components/profile-provider";
 import { StageHeroCard } from "@/components/stage-hero-card";
 import {
@@ -54,6 +64,8 @@ interface WorkflowRoadmapProps {
   hideCreationPhase?: boolean;
   /** Which cycle cards to render (defaults to all three) — used to scope the view to one cycle at a time (e.g. per Lead event). */
   visibleCycles?: ReviewCycleType[];
+  /** Rendered between the roadmap and the Activity History card, so history always stays last on the page. */
+  beforeHistory?: React.ReactNode;
 }
 
 const CYCLE_ORDER: ReviewCycleType[] = ["proposal", "delivery", "customer"];
@@ -181,17 +193,52 @@ export function WorkflowRoadmap({
   onChange,
   hideCreationPhase,
   visibleCycles = CYCLE_ORDER,
+  beforeHistory,
 }: WorkflowRoadmapProps) {
   const { can } = useProfile();
   const [loading, setLoading] = useState<WorkflowAction["type"] | null>(null);
   const [note, setNote] = useState("");
 
+  const [reworkDocs, setReworkDocs] = useState<Omit<UploadedFile, "id" | "proposalId" | "uploadedAt">[]>([]);
+
+  // A review stage can't be actioned until the AI Enabled Review has been run —
+  // the panel dispatches "deep-review-saved" so an inline run unlocks it live.
+  const [deepReview, setDeepReview] = useState<DeepReview | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    const load = () =>
+      getDeepReview(proposal.id).then((r) => {
+        if (!cancelled) setDeepReview(r ?? null);
+      });
+    load();
+    window.addEventListener("deep-review-saved", load);
+    return () => {
+      cancelled = true;
+      window.removeEventListener("deep-review-saved", load);
+    };
+  }, [proposal.id]);
+
   const currentStage = proposal.workflowStage;
   const currentCycleType = currentStage ? getCycleType(currentStage) : null;
   const events = proposal.workflowEvents;
   const cycles = proposal.workflowCycles;
-  const availableActions = getAvailableActions(proposal);
   const isFinalized = currentStage === "approved" || currentStage === "rejected";
+  const isRework = Boolean(currentStage?.endsWith("_rework"));
+
+  // A review only counts for the review stage it was run in: each cycle (SPARC,
+  // Delivery) and each resubmitted version demands a fresh AI review run.
+  const lastResubmittedAt = events
+    .filter((e) => e.type === "changes_submitted")
+    .reduce<Date | null>((latest, e) => (!latest || e.createdAt > latest ? e.createdAt : latest), null);
+  const activeCycle = cycles.find((c) => c.id === proposal.currentCycleId);
+  const reviewStaleAfter = [activeCycle?.startedAt, lastResubmittedAt]
+    .filter((d): d is Date => Boolean(d))
+    .reduce<Date | null>((latest, d) => (!latest || d > latest ? d : latest), null);
+  const deepReviewIsCurrent =
+    Boolean(deepReview) &&
+    (!reviewStaleAfter || new Date(deepReview!.analyzed_at) > reviewStaleAfter);
+  const awaitingDeepReview = Boolean(currentStage?.endsWith("_review")) && !deepReviewIsCurrent;
+  const availableActions = awaitingDeepReview ? [] : getAvailableActions(proposal);
 
   const stageDurations = useMemo(() => getStageDurations(events), [events]);
   const currentStageDuration = stageDurations[stageDurations.length - 1]?.durationMs ?? 0;
@@ -275,6 +322,14 @@ export function WorkflowRoadmap({
   const handleAction = async (actionType: WorkflowAction["type"]) => {
     setLoading(actionType);
     try {
+      // The revised proposal has to land on the record before the cycle goes back
+      // to review, otherwise the reviewer re-reviews the old version.
+      if (actionType === "submit_changes") {
+        for (const doc of reworkDocs) {
+          await addDocument(proposal.id, doc, { cycleId: proposal.currentCycleId });
+        }
+      }
+      // reject_to_sparc already stores its note as the cycle's feedback summary.
       const action: WorkflowAction =
         actionType === "request_changes"
           ? { type: actionType, note, feedbackSummary: note }
@@ -282,6 +337,7 @@ export function WorkflowRoadmap({
       const updated = await applyWorkflowAction(proposal.id, action);
       onChange(updated);
       setNote("");
+      setReworkDocs([]);
     } finally {
       setLoading(null);
     }
@@ -308,12 +364,34 @@ export function WorkflowRoadmap({
             <CardTitle className="text-base">Take Action</CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
+            {awaitingDeepReview && (
+              <p className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-2.5 text-sm text-amber-700">
+                Run the AI Enabled Review on this proposal before approving or rejecting it.
+              </p>
+            )}
+            {isRework && (
+              <div className="space-y-2">
+                <p className="text-sm font-medium text-text-primary">Updated proposal</p>
+                <p className="text-xs text-text-secondary">
+                  Upload the revised proposal addressing the reviewer&apos;s feedback, then submit it to
+                  start iteration {heroIteration} of this review.
+                </p>
+                <FileUpload category="final_proposal" files={reworkDocs} onChange={setReworkDocs} />
+              </div>
+            )}
+
             <div className="flex flex-wrap gap-3">
               {availableActions.map((action) => (
                 <Button
                   key={action}
                   onClick={() => handleAction(action)}
-                  disabled={loading !== null}
+                  disabled={
+                    loading !== null ||
+                    // Rejecting back for rework must carry feedback the owner can act on.
+                    (action === "reject_to_sparc" && !note.trim()) ||
+                    // Resubmitting means there is a new version to review.
+                    (action === "submit_changes" && reworkDocs.length === 0)
+                  }
                   variant={
                     action === "approve" ||
                     action === "submit_for_review" ||
@@ -350,11 +428,16 @@ export function WorkflowRoadmap({
 
             {(availableActions.includes("add_feedback") ||
               availableActions.includes("request_changes") ||
-              availableActions.includes("reject_to_sparc")) && (
+              availableActions.includes("reject_to_sparc") ||
+              availableActions.includes("submit_changes")) && (
               <Textarea
                 value={note}
                 onChange={(e) => setNote(e.target.value)}
-                placeholder="Add a note or feedback context for this action..."
+                placeholder={
+                  isRework
+                    ? "What changed in this version? (optional)"
+                    : "Reviewer feedback — required to send the proposal back for rework"
+                }
                 rows={3}
               />
             )}
@@ -637,6 +720,8 @@ export function WorkflowRoadmap({
           </div>
         </CardContent>
       </Card>
+
+      {beforeHistory}
 
       {/* Activity History */}
       <Card>

@@ -203,8 +203,8 @@ export const DEFAULT_LEAD_EVENT_STATUSES: LeadStatus[] = [
   "qualified", // 4 Proposal Creation
   "proposal", // 5 Proposal Review - SPARC
   "proposal", // 6 Proposal Review - Delivery
-  "proposal", // 7 Customer Pitch & Feedback
-  "proposal", // 8 Proposal Retro & Wrap
+  "customer_pitch", // 7 Customer Pitch & Feedback
+  "customer_pitch", // 8 Proposal Retro & Wrap
 ];
 
 const isLeadStatus = (v: unknown): v is LeadStatus =>

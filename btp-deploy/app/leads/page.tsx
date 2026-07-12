@@ -9,6 +9,7 @@ import { RequireAccess } from "@/components/require-access";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { ProposalScoreBadge } from "@/components/proposal-score-badge";
 import { leadStatusLabels, type Lead } from "@/lib/types";
 import { LEAD_EVENT_LABELS, LEAD_STATUS_BADGE } from "@/lib/lead-events";
 import { cn, formatDate } from "@/lib/utils";
@@ -193,19 +194,7 @@ function LeadsPageContent() {
                     <Badge className={LEAD_STATUS_BADGE[lead.status]}>
                       {leadStatusLabels[lead.status]}
                     </Badge>
-                    {/* Only leads whose proposal has actually been reviewed have a score. */}
-                    {lead.proposalId && reviews.get(lead.proposalId) && (
-                      <span
-                        className={cn(
-                          "rounded-full px-2.5 py-0.5 text-xs font-semibold",
-                          reviews.get(lead.proposalId)!.overall_score >= 60
-                            ? "bg-green-100 text-green-700"
-                            : "bg-red-100 text-red-700"
-                        )}
-                      >
-                        {reviews.get(lead.proposalId)!.overall_score}/100
-                      </span>
-                    )}
+                    <ProposalScoreBadge lead={lead} reviews={reviews} />
                   </div>
                   <div
                     className="flex items-center gap-1"

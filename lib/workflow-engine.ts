@@ -247,6 +247,12 @@ async function handleSubmitChanges(
   const cycleType = getCycleTypeForStage(stage);
   const reviewStage = `${cycleType}_review` as WorkflowStage;
 
+  // The cycle was parked in "rework" by the rejection — it's live again.
+  const currentCycle = proposal.workflowCycles.find((c) => c.id === proposal.currentCycleId);
+  if (currentCycle) {
+    await updateWorkflowCycle(currentCycle.id, { status: "active", stage: reviewStage });
+  }
+
   return transitionStage(proposal, stage, reviewStage, "changes_submitted", actor, note);
 }
 
@@ -458,7 +464,11 @@ export function getAvailableActions(proposal: Proposal | undefined): WorkflowAct
     if (!proposal?.proposalCreationStartedAt) return ["start_proposal_creation"];
     return ["submit_for_review"];
   }
-  if (stage.endsWith("_review")) return ["approve", "reject"];
+  // Rejecting a review sends the proposal back for rework (feedback + iteration
+  // bump) rather than killing it — the SPARC owner uploads a new version and
+  // resubmits into the same cycle.
+  if (stage.endsWith("_review")) return ["approve", "reject_to_sparc"];
+  if (stage.endsWith("_rework")) return ["submit_changes"];
   return [];
 }
 
@@ -469,10 +479,10 @@ export function getActionLabel(action: WorkflowAction["type"]): string {
     submit_for_review: "Submit for Review",
     add_feedback: "Add Feedback",
     request_changes: "Request Changes",
-    submit_changes: "Submit Changes",
+    submit_changes: "Submit Updated Proposal",
     approve: "Approve & Move Forward",
     reject: "Reject",
-    reject_to_sparc: "Reject & Send to SPARC Owner",
+    reject_to_sparc: "Reject & Send Back for Rework",
   };
   return labels[action];
 }

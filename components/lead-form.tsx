@@ -18,6 +18,7 @@ import { StageHeroCard } from "@/components/stage-hero-card";
 import { LEAD_EVENT_LABELS } from "@/lib/lead-events";
 import { FileUpload } from "@/components/file-upload";
 import { WorkflowRoadmap } from "@/components/workflow-roadmap";
+import { AiReviewPanel } from "@/components/ai-review-panel";
 import {
   getLeadStatuses,
   getLeadTypes,
@@ -953,6 +954,17 @@ export function LeadForm({ lead: leadProp }: LeadFormProps) {
     }));
   };
 
+  // Event 4 dates default to the day the proposal actually lands (generated or
+  // uploaded). Never overwrites a date the user already set.
+  const stampProposalDates = (prev: typeof form) => {
+    const today = new Date().toISOString().slice(0, 10);
+    return {
+      ...prev,
+      proposalStartDate: prev.proposalStartDate || today,
+      proposalEndDate: prev.proposalEndDate || today,
+    };
+  };
+
   // Consolidate the customer expectations captured in Events 1-3 and have the
   // AI produce a proposal deck (.pptx). Downloads the file and attaches it to
   // the Event 4 proposal attachments so it's saved with the lead.
@@ -994,7 +1006,7 @@ export function LeadForm({ lead: leadProp }: LeadFormProps) {
       downloadBlob(blob, niceName);
 
       setForm((prev) => ({
-        ...prev,
+        ...stampProposalDates(prev),
         proposalAttachments: [
           ...prev.proposalAttachments,
           {
@@ -1094,13 +1106,28 @@ export function LeadForm({ lead: leadProp }: LeadFormProps) {
   const handleLinkedProposalChange = async (proposal: Proposal) => {
     setLinkedProposal(proposal);
     if (!lead) return;
-    const cycleType = proposal.workflowStage ? getCycleType(proposal.workflowStage) : null;
-    const eventNumber = cycleType === "delivery" ? 6 : cycleType === "proposal" ? 5 : null;
+    const stage = proposal.workflowStage;
+    const cycleType = stage ? getCycleType(stage) : null;
+    const isFinal = stage === "approved" || stage === "rejected";
+    // The workflow owns the cycle — approving the SPARC (proposal) review moves
+    // the proposal into the delivery cycle, so the lead must follow it onto the
+    // matching event instead of leaving the reviewer on the finished one.
+    const eventNumber = isFinal
+      ? RETRO_EVENT
+      : cycleType === "customer"
+        ? PITCH_EVENT
+        : cycleType === "delivery"
+          ? 6
+          : cycleType === "proposal"
+            ? 5
+            : null;
     if (!eventNumber) return;
     const updated = await persistLead(lead.id, {
+      currentEvent: Math.max(lead.currentEvent, eventNumber),
       eventData: appendEventActivity(lead.eventData ?? {}, `event${eventNumber}`, currentProfile?.name ?? "System", ["Proposal workflow changed"]),
     });
     if (updated) setForm((prev) => ({ ...prev, currentEvent: Math.max(prev.currentEvent, updated.currentEvent) }));
+    setStep((prev) => Math.max(prev, eventNumber));
   };
 
   // Event 7 — Customer Pitch & Feedback: capture the pitch details and unlock
@@ -1871,6 +1898,7 @@ export function LeadForm({ lead: leadProp }: LeadFormProps) {
                 onChange={handleLinkedProposalChange}
                 hideCreationPhase
                 visibleCycles={[REVIEW_EVENT_CYCLE[step] ?? "proposal"]}
+                beforeHistory={<AiReviewPanel proposalId={linkedProposal.id} embedded />}
               />
             </>
           ) : null}
@@ -2445,7 +2473,12 @@ export function LeadForm({ lead: leadProp }: LeadFormProps) {
                   <FileUpload
                     category="lead_proposal"
                     files={form.proposalAttachments}
-                    onChange={(files) => setForm({ ...form, proposalAttachments: files })}
+                    onChange={(files) =>
+                      setForm((prev) => ({
+                        ...(files.length ? stampProposalDates(prev) : prev),
+                        proposalAttachments: files,
+                      }))
+                    }
                   />
                 </div>
               </div>

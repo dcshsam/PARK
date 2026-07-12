@@ -172,6 +172,7 @@ export type LeadStatus =
   | "in_progress"
   | "qualified"
   | "proposal"
+  | "customer_pitch"
   | "converted"
   | "on_hold"
   | "dropped";
@@ -223,6 +224,7 @@ export const leadStatusLabels: Record<LeadStatus, string> = {
   in_progress: "In Progress",
   qualified: "Qualified",
   proposal: "Proposal",
+  customer_pitch: "Customer Pitch",
   converted: "Converted",
   on_hold: "On Hold",
   dropped: "Dropped",

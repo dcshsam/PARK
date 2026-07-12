@@ -3,7 +3,9 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { motion } from "framer-motion";
-import { getLeads } from "@/lib/db";
+import { getLeads, getDeepReviewMap } from "@/lib/db";
+import type { DeepReview } from "@/lib/deep-review/types";
+import { ProposalScoreBadge } from "@/components/proposal-score-badge";
 import type { Lead, LeadStatus, TeamActivity, TeamActivityCategory } from "@/lib/types";
 import { leadStatusLabels } from "@/lib/types";
 import { LEAD_EVENT_SHORT, LEAD_STATUS_COLORS, LEAD_STATUS_BADGE, LEAD_STATUS_ORDER } from "@/lib/lead-events";
@@ -114,6 +116,7 @@ function overlapsRange(start: Date, end: Date, rangeStart: Date, rangeEnd: Date)
 
 export default function DashboardPage() {
   const [leads, setLeads] = useState<Lead[]>([]);
+  const [reviews, setReviews] = useState<Map<string, DeepReview>>(new Map());
   const [teamMembers, setTeamMembers] = useState<TeamMember[]>([]);
   const [activities, setActivities] = useState<TeamActivity[]>([]);
   const [loading, setLoading] = useState(true);
@@ -125,6 +128,7 @@ export default function DashboardPage() {
       setLeads(data);
       setLoading(false);
     });
+    getDeepReviewMap().then(setReviews);
     getTeamActivities().then(setActivities);
   }, []);
 
@@ -365,7 +369,8 @@ export default function DashboardPage() {
                       <th className="pb-2 pr-4">Region</th>
                       <th className="pb-2 pr-4">Vertical</th>
                       <th className="pb-2 pr-4">Event</th>
-                      <th className="pb-2">Status</th>
+                      <th className="pb-2 pr-4">Status</th>
+                      <th className="pb-2">Score</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -386,8 +391,11 @@ export default function DashboardPage() {
                             {lead.currentEvent ?? 1}/8 · {LEAD_EVENT_SHORT[(lead.currentEvent ?? 1) - 1]}
                           </span>
                         </td>
-                        <td className="py-3">
+                        <td className="py-3 pr-4">
                           <Badge className={LEAD_STATUS_BADGE[lead.status]}>{leadStatusLabels[lead.status]}</Badge>
+                        </td>
+                        <td className="py-3">
+                          <ProposalScoreBadge lead={lead} reviews={reviews} />
                         </td>
                       </tr>
                     ))}
