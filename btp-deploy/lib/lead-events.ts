@@ -1,4 +1,5 @@
 import type { Lead, LeadStatus } from "./types";
+import { getLeadEventStatuses } from "./workspace-config";
 
 // Single source of truth for the Lead Master 8-event roadmap, shared by the
 // lead form, dashboard and analytics.
@@ -43,18 +44,17 @@ export function hasOpenPause(eventData: Record<string, unknown> | undefined): bo
  * from the lead's own pause periods, so the badge can't drift from reality.
  *
  * Won / lost is a real decision recorded at the retro, so an explicit
- * converted / dropped always wins. Everything else is derived.
+ * converted / dropped always wins. Everything else is derived, using the
+ * event → status ladder configured in Settings.
  */
 export function deriveLeadStatus(
-  lead: Pick<Lead, "status" | "currentEvent" | "eventData">
+  lead: Pick<Lead, "status" | "currentEvent" | "eventData">,
+  ladder: LeadStatus[] = getLeadEventStatuses()
 ): LeadStatus {
   if (lead.status === "converted" || lead.status === "dropped") return lead.status;
   if (hasOpenPause(lead.eventData)) return "on_hold";
-  const event = lead.currentEvent ?? 1;
-  if (event >= 5) return "proposal";
-  if (event >= 3) return "qualified";
-  if (event >= 2) return "in_progress";
-  return "new";
+  const event = Math.min(Math.max(lead.currentEvent ?? 1, 1), ladder.length);
+  return ladder[event - 1];
 }
 
 /** Display order for status filters, legends and charts. */

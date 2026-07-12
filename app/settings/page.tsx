@@ -10,6 +10,7 @@ import { Download, Trash2, Database, Shield, Link as LinkIcon, Users, Palette } 
 import { LlmSettings } from "@/components/llm-settings";
 import { WorkspaceSettings } from "@/components/workspace-settings";
 import { LeadSettings } from "@/components/lead-settings";
+import { LeadStatusLadderSettings } from "@/components/lead-status-ladder-settings";
 import { TeamSettings } from "@/components/team-settings";
 import { ThemeMenu } from "@/components/theme-toggle";
 import { RequireAccess } from "@/components/require-access";
@@ -147,6 +148,10 @@ function SettingsContent() {
 
         <div className="lg:col-span-2">
           <LeadSettings />
+        </div>
+
+        <div className="lg:col-span-2">
+          <LeadStatusLadderSettings />
         </div>
 
         <div className="lg:col-span-2">

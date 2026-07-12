@@ -1,3 +1,5 @@
+import { leadStatusLabels, type LeadStatus } from "./types";
+
 const TECHNOLOGIES_KEY = "prop-review:technologies";
 const PROJECT_TYPES_KEY = "prop-review:project-types";
 const SPARC_OWNERS_KEY = "prop-review:sparc-owners";
@@ -184,4 +186,50 @@ export function getLeadTypes(): string[] {
 
 export function saveLeadTypes(types: string[]): void {
   saveList(LEAD_TYPES_KEY, types);
+}
+
+// ── Event → status ladder ───────────────────────────────────────────────────
+// Which status a lead shows once it reaches each of the 8 events. Configurable
+// in Settings; a lead's status is derived from this, never stored stale.
+// Not a getList/saveList: those dedupe, and this map repeats statuses on purpose
+// (Events 3 and 4 are both "qualified" by default).
+
+const LEAD_EVENT_STATUSES_KEY = "prop-review:lead-event-statuses";
+
+export const DEFAULT_LEAD_EVENT_STATUSES: LeadStatus[] = [
+  "new", // 1 Lead Initiation
+  "in_progress", // 2 Pre-Qualification
+  "qualified", // 3 Due Diligence
+  "qualified", // 4 Proposal Creation
+  "proposal", // 5 Proposal Review - SPARC
+  "proposal", // 6 Proposal Review - Delivery
+  "proposal", // 7 Customer Pitch & Feedback
+  "proposal", // 8 Proposal Retro & Wrap
+];
+
+const isLeadStatus = (v: unknown): v is LeadStatus =>
+  typeof v === "string" && v in leadStatusLabels;
+
+export function getLeadEventStatuses(): LeadStatus[] {
+  if (typeof window === "undefined") return DEFAULT_LEAD_EVENT_STATUSES;
+  try {
+    const raw = window.localStorage.getItem(LEAD_EVENT_STATUSES_KEY);
+    if (!raw) return DEFAULT_LEAD_EVENT_STATUSES;
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) return DEFAULT_LEAD_EVENT_STATUSES;
+    // Fall back per-slot, so one bad or missing entry can't blank the ladder.
+    return DEFAULT_LEAD_EVENT_STATUSES.map((fallback, i) =>
+      isLeadStatus(parsed[i]) ? parsed[i] : fallback
+    );
+  } catch {
+    return DEFAULT_LEAD_EVENT_STATUSES;
+  }
+}
+
+export function saveLeadEventStatuses(statuses: LeadStatus[]): void {
+  if (typeof window === "undefined") return;
+  const cleaned = DEFAULT_LEAD_EVENT_STATUSES.map((fallback, i) =>
+    isLeadStatus(statuses[i]) ? statuses[i] : fallback
+  );
+  window.localStorage.setItem(LEAD_EVENT_STATUSES_KEY, JSON.stringify(cleaned));
 }
