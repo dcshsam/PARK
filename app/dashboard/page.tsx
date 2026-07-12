@@ -6,7 +6,7 @@ import { motion } from "framer-motion";
 import { getLeads } from "@/lib/db";
 import type { Lead, LeadStatus, TeamActivity, TeamActivityCategory } from "@/lib/types";
 import { leadStatusLabels } from "@/lib/types";
-import { LEAD_EVENT_SHORT, LEAD_STATUS_COLORS, LEAD_STATUS_BADGE } from "@/lib/lead-events";
+import { LEAD_EVENT_SHORT, LEAD_STATUS_COLORS, LEAD_STATUS_BADGE, LEAD_STATUS_ORDER } from "@/lib/lead-events";
 import { getTeamActivities, teamActivityCategoryLabels } from "@/lib/team-activity";
 import { getTeamMembers, seedTeamMembers } from "@/lib/team-members";
 import type { TeamMember } from "@/lib/team-members";
@@ -151,8 +151,7 @@ export default function DashboardPage() {
   );
 
   const leadStatusData = useMemo(() => {
-    const order: LeadStatus[] = ["new", "qualified", "proposal", "converted", "on_hold", "dropped"];
-    return order
+    return LEAD_STATUS_ORDER
       .map((s) => ({ name: leadStatusLabels[s], status: s, value: leads.filter((l) => l.status === s).length }))
       .filter((d) => d.value > 0);
   }, [leads]);

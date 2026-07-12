@@ -607,7 +607,7 @@ function toLead(record: Lead): Lead {
   return {
     ...record,
     currentEvent,
-    status: deriveLeadStatus(record.status, currentEvent),
+    status: deriveLeadStatus({ ...record, currentEvent }),
     date: record.date ? new Date(record.date) : undefined,
     createdAt: new Date(record.createdAt),
     updatedAt: new Date(record.updatedAt),

@@ -167,7 +167,14 @@ export const categoryLabels: Record<DocumentCategory, string> = {
 
 // ── Lead Management ────────────────────────────────────────────────────────
 
-export type LeadStatus = "new" | "qualified" | "proposal" | "converted" | "on_hold" | "dropped";
+export type LeadStatus =
+  | "new"
+  | "in_progress"
+  | "qualified"
+  | "proposal"
+  | "converted"
+  | "on_hold"
+  | "dropped";
 
 export interface Lead {
   id: string;
@@ -213,6 +220,7 @@ export interface LeadDocument {
 
 export const leadStatusLabels: Record<LeadStatus, string> = {
   new: "New",
+  in_progress: "In Progress",
   qualified: "Qualified",
   proposal: "Proposal",
   converted: "Converted",

@@ -9,19 +9,10 @@ import { RequireAccess } from "@/components/require-access";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { leadStatusLabels, type Lead, type LeadStatus } from "@/lib/types";
-import { LEAD_EVENT_LABELS } from "@/lib/lead-events";
+import { leadStatusLabels, type Lead } from "@/lib/types";
+import { LEAD_EVENT_LABELS, LEAD_STATUS_BADGE } from "@/lib/lead-events";
 import { cn, formatDate } from "@/lib/utils";
 import { Plus, Trash2, FileText, Eye, Pencil, Database, Loader2 } from "lucide-react";
-
-const statusBadge: Record<LeadStatus, string> = {
-  new: "bg-status-info-bg text-status-info-text",
-  qualified: "bg-status-success-bg text-status-success-text",
-  proposal: "bg-primary-100 text-primary-700",
-  converted: "bg-status-success-bg text-status-success-text",
-  on_hold: "bg-status-warning-bg text-status-warning-text",
-  dropped: "bg-status-danger-bg text-status-danger-text",
-};
 
 // The lead's 8-event roadmap. currentEvent is 1-based and points at the event
 // still being worked, so everything before it is done. on_hold / dropped leaves
@@ -199,7 +190,7 @@ function LeadsPageContent() {
                 <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                   <div className="flex items-center gap-3">
                     <CardTitle className="text-base">{lead.leadName || lead.kytesId}</CardTitle>
-                    <Badge className={statusBadge[lead.status]}>
+                    <Badge className={LEAD_STATUS_BADGE[lead.status]}>
                       {leadStatusLabels[lead.status]}
                     </Badge>
                     {/* Only leads whose proposal has actually been reviewed have a score. */}
