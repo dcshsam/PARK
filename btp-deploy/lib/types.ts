@@ -183,6 +183,7 @@ export interface Lead {
   /** Customer / client name — carried over to the linked proposal at Event 5. */
   clientName: string;
   /** Optional Proposal Basic Info fields captured early so Event 5 doesn't re-ask for them. */
+  sparcOwner?: string;
   sparcMentor?: string;
   proposalReviewer?: string;
   proposalRegion?: string;

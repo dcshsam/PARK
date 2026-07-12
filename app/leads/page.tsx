@@ -2,7 +2,8 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { deleteLead, getLeads, seedSampleLeads } from "@/lib/db";
+import { deleteLead, getLeads, seedSampleLeads, getDeepReviewMap } from "@/lib/db";
+import type { DeepReview } from "@/lib/deep-review/types";
 import { useProfile } from "@/components/profile-provider";
 import { RequireAccess } from "@/components/require-access";
 import { Button } from "@/components/ui/button";
@@ -96,6 +97,7 @@ function LeadsPageContent() {
   const router = useRouter();
   const { can } = useProfile();
   const [leads, setLeads] = useState<Lead[]>([]);
+  const [reviews, setReviews] = useState<Map<string, DeepReview>>(new Map());
   const [loading, setLoading] = useState(true);
   const [seeding, setSeeding] = useState(false);
 
@@ -103,6 +105,7 @@ function LeadsPageContent() {
     const all = await getLeads();
     setLeads(all);
     setLoading(false);
+    setReviews(await getDeepReviewMap());
   };
 
   useEffect(() => {
@@ -112,6 +115,9 @@ function LeadsPageContent() {
         setLeads(all);
         setLoading(false);
       }
+    });
+    getDeepReviewMap().then((m) => {
+      if (!cancelled) setReviews(m);
     });
     return () => {
       cancelled = true;
@@ -196,6 +202,19 @@ function LeadsPageContent() {
                     <Badge className={statusBadge[lead.status]}>
                       {leadStatusLabels[lead.status]}
                     </Badge>
+                    {/* Only leads whose proposal has actually been reviewed have a score. */}
+                    {lead.proposalId && reviews.get(lead.proposalId) && (
+                      <span
+                        className={cn(
+                          "rounded-full px-2.5 py-0.5 text-xs font-semibold",
+                          reviews.get(lead.proposalId)!.overall_score >= 60
+                            ? "bg-green-100 text-green-700"
+                            : "bg-red-100 text-red-700"
+                        )}
+                      >
+                        {reviews.get(lead.proposalId)!.overall_score}/100
+                      </span>
+                    )}
                   </div>
                   <div
                     className="flex items-center gap-1"
@@ -247,8 +266,12 @@ function LeadsPageContent() {
                     <dd className="text-text-primary">{lead.vertical || "—"}</dd>
                   </div>
                   <div>
-                    <dt className="text-xs font-medium uppercase text-text-tertiary">GTM Name</dt>
+                    <dt className="text-xs font-medium uppercase text-text-tertiary">GTM Owner</dt>
                     <dd className="text-text-primary">{lead.gtmName || "—"}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-xs font-medium uppercase text-text-tertiary">SPARC Owner</dt>
+                    <dd className="text-text-primary">{lead.sparcOwner || "—"}</dd>
                   </div>
                   <div>
                     <dt className="text-xs font-medium uppercase text-text-tertiary">Date</dt>
