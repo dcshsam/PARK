@@ -11,6 +11,7 @@ import type {
   Lead,
 } from "./types";
 import { seedDemoData } from "./demo-data";
+import { deriveLeadStatus } from "./lead-events";
 import type { DeepReview } from "./deep-review/types";
 import { BUILTIN_RULE_DEFAULTS, type DeepRule } from "./deep-review/builtin-rules";
 import { getActiveProfileId, type Profile } from "./profiles/types";
@@ -599,30 +600,32 @@ export async function deleteProfile(id: string): Promise<void> {
 /** Map of proposalId → latest saved deep review, for list/dashboard/analytics views. */
 // ── Leads ───────────────────────────────────────────────────────────────────
 
+/** Single normalizer for every lead read: dates, currentEvent default, and the
+ * status derived from the event actually reached (see deriveLeadStatus). */
+function toLead(record: Lead): Lead {
+  const currentEvent = record.currentEvent ?? 1;
+  return {
+    ...record,
+    currentEvent,
+    status: deriveLeadStatus(record.status, currentEvent),
+    date: record.date ? new Date(record.date) : undefined,
+    createdAt: new Date(record.createdAt),
+    updatedAt: new Date(record.updatedAt),
+  };
+}
+
 export async function getLeads(): Promise<Lead[]> {
   const db = getDb();
   await seedIfEmpty();
   const records = await db.leads.orderBy("updatedAt").reverse().toArray();
-  return records.map((record) => ({
-    ...record,
-    currentEvent: record.currentEvent ?? 1,
-    date: record.date ? new Date(record.date) : undefined,
-    createdAt: new Date(record.createdAt),
-    updatedAt: new Date(record.updatedAt),
-  }));
+  return records.map(toLead);
 }
 
 export async function getLead(id: string): Promise<Lead | undefined> {
   const db = getDb();
   const record = await db.leads.get(id);
   if (!record) return undefined;
-  return {
-    ...record,
-    currentEvent: record.currentEvent ?? 1,
-    date: record.date ? new Date(record.date) : undefined,
-    createdAt: new Date(record.createdAt),
-    updatedAt: new Date(record.updatedAt),
-  };
+  return toLead(record);
 }
 
 /**
@@ -644,13 +647,7 @@ export async function getLeadByProposalId(proposalId: string): Promise<Lead | un
   const db = getDb();
   const record = await db.leads.filter((lead) => lead.proposalId === proposalId).first();
   if (!record) return undefined;
-  return {
-    ...record,
-    currentEvent: record.currentEvent ?? 1,
-    date: record.date ? new Date(record.date) : undefined,
-    createdAt: new Date(record.createdAt),
-    updatedAt: new Date(record.updatedAt),
-  };
+  return toLead(record);
 }
 
 export async function addLead(

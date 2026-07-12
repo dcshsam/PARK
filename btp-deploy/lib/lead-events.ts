@@ -25,6 +25,19 @@ export const LEAD_EVENT_SHORT = [
   "Retro & Wrap",
 ] as const;
 
+/**
+ * lead.status is only written at Event 1 (user-picked, defaults to "new") and at
+ * Event 8 (retro outcome) — Events 2-7 never touch it, so a lead halfway through
+ * the roadmap still reads "New". Derive the status from the event it's actually
+ * on, unless it was explicitly parked or closed out.
+ */
+export function deriveLeadStatus(status: LeadStatus, currentEvent: number): LeadStatus {
+  if (status === "converted" || status === "dropped" || status === "on_hold") return status;
+  if (currentEvent >= 5) return "proposal";
+  if (currentEvent >= 3) return "qualified";
+  return "new";
+}
+
 export const LEAD_STATUS_COLORS: Record<LeadStatus, string> = {
   new: "#3b82f6",
   qualified: "#14b8a6",
