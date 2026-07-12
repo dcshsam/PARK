@@ -1,8 +1,10 @@
 "use client";
 
+import { useState } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
+import { Input } from "@/components/ui/input";
 
 export interface StageHeroTheme {
   /** Text color class for the stage title. */
@@ -29,6 +31,10 @@ interface StageHeroCardProps {
   badge?: string;
   theme?: StageHeroTheme;
   metrics: { label: string; value: string }[];
+  timingPaused?: boolean;
+  pauseReason?: string;
+  onPause?: (reason: string) => void;
+  onResume?: () => void;
 }
 
 /** The "Current Stage" hero bar — shared by the workflow roadmap and the lead events. */
@@ -38,7 +44,13 @@ export function StageHeroCard({
   badge,
   theme = DEFAULT_THEME,
   metrics,
+  timingPaused = false,
+  pauseReason,
+  onPause,
+  onResume,
 }: StageHeroCardProps) {
+  const [reason, setReason] = useState("");
+
   return (
     <Card className={cn("overflow-hidden border-l-4", theme.border)}>
       <div className={cn("h-2 w-full", theme.bg)} />
@@ -53,13 +65,63 @@ export function StageHeroCard({
               </Badge>
             )}
           </div>
-          <div className="flex flex-wrap gap-4 text-sm">
+          <div className="flex flex-wrap items-end gap-4 text-sm">
             {metrics.map((m) => (
               <div key={m.label} className="rounded-xl bg-surface-muted/70 px-4 py-2">
                 <p className="text-xs text-text-tertiary">{m.label}</p>
                 <p className="font-semibold text-text-primary">{m.value}</p>
               </div>
             ))}
+            {onPause && onResume && (
+              <div className="min-w-56 rounded-xl border border-border bg-surface-muted/40 p-2">
+                <p className="mb-1.5 text-xs font-semibold text-text-secondary">Pause event</p>
+                {timingPaused ? (
+                  <div className="flex items-center gap-2">
+                    {pauseReason && (
+                      <p className="max-w-36 text-xs text-text-tertiary" title={pauseReason}>
+                        {pauseReason}
+                      </p>
+                    )}
+                    <button
+                      type="button"
+                      role="switch"
+                      aria-checked={false}
+                      aria-label="Resume time"
+                      onClick={() => {
+                        onResume();
+                        setReason("");
+                      }}
+                      className="relative flex h-10 w-[92px] items-center justify-between rounded-full bg-neutral-400 px-2 text-sm font-semibold text-white shadow-inner transition-colors hover:bg-neutral-500"
+                    >
+                      <span className="pl-1">OFF</span>
+                      <span className="h-8 w-8 rounded-full bg-white shadow-md" />
+                    </button>
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-2">
+                    <Input
+                      value={reason}
+                      onChange={(e) => setReason(e.target.value)}
+                      placeholder="Pause comment"
+                      className="h-9 w-36 text-xs"
+                      aria-label="Pause comment"
+                    />
+                    <button
+                      type="button"
+                      role="switch"
+                      aria-checked={true}
+                      aria-label="Pause time"
+                      disabled={!reason.trim()}
+                      onClick={() => onPause(reason.trim())}
+                      className="relative flex h-10 w-[92px] items-center justify-between rounded-full bg-primary-600 px-2 text-sm font-semibold text-white shadow-inner transition-colors hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      <span className="pl-1">ON</span>
+                      <span className="h-8 w-8 rounded-full bg-white shadow-md" />
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         </div>
       </CardContent>

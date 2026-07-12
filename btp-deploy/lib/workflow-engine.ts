@@ -14,6 +14,7 @@ import {
   getNextStage,
   isCompletedStage,
   isFinalReviewStage,
+  isReviewStage,
   isReworkStage,
 } from "./workflow-config";
 import type { Proposal, ReviewCycleType, WorkflowStage, WorkflowCycle } from "./types";
@@ -266,7 +267,7 @@ async function handleApprove(
 
   const currentCycle = proposal.workflowCycles.find((c) => c.id === proposal.currentCycleId);
 
-  if (isFinalReviewStage(stage) && currentCycle) {
+  if ((isFinalReviewStage(stage) || isReviewStage(stage)) && currentCycle) {
     // Complete current cycle and move to next stage
     const now = new Date();
     await updateWorkflowCycle(currentCycle.id, {
@@ -457,9 +458,7 @@ export function getAvailableActions(proposal: Proposal | undefined): WorkflowAct
     if (!proposal?.proposalCreationStartedAt) return ["start_proposal_creation"];
     return ["submit_for_review"];
   }
-  if (stage.endsWith("_review")) return ["add_feedback", "approve", "reject_to_sparc"];
-  if (stage.endsWith("_feedback")) return ["request_changes"];
-  if (stage.endsWith("_rework")) return ["submit_changes"];
+  if (stage.endsWith("_review")) return ["approve", "reject"];
   return [];
 }
 

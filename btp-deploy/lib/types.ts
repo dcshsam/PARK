@@ -177,6 +177,9 @@ export interface Lead {
   hgStatus: string;
   date?: Date;
   gtmName: string;
+  gtmHead?: string;
+  deliveryName?: string;
+  deliveryHead?: string;
   vertical: string;
   leadType: string;
   requirementSummary: string;

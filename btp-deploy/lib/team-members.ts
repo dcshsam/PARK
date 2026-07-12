@@ -6,6 +6,7 @@ export type TeamMemberRole =
   | "sparc_owner"
   | "sparc_mentor"
   | "gtm_owner"
+  | "gtm_head"
   | "proposal_reviewer"
   | "proposal_owner"
   | "proposal_contributor"
@@ -96,6 +97,7 @@ export const TEAM_MEMBER_ROLES: TeamMemberRole[] = [
   "sparc_owner",
   "sparc_mentor",
   "gtm_owner",
+  "gtm_head",
   "proposal_reviewer",
   "proposal_owner",
   "proposal_contributor",
@@ -107,6 +109,7 @@ export const TEAM_MEMBER_ROLE_LABELS: Record<TeamMemberRole, string> = {
   sparc_owner: "SPARC Owner",
   sparc_mentor: "SPARC Mentor",
   gtm_owner: "GTM Owner",
+  gtm_head: "GTM Head",
   proposal_reviewer: "Proposal Reviewer",
   proposal_owner: "Proposal Owner",
   proposal_contributor: "Proposal Contributor",

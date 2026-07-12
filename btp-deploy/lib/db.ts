@@ -95,7 +95,7 @@ async function hydrateProposal(
   opts: { lightDocuments?: boolean } = {}
 ): Promise<Proposal> {
   const db = getDb();
-  const documents = await db.documents.where("proposalId").equals(record.id).sortBy("uploadedAt");
+  const documents = (await db.documents.where("proposalId").equals(record.id).sortBy("uploadedAt")).reverse();
   const comments = await db.comments.where("proposalId").equals(record.id).sortBy("createdAt");
   const workflowCycles = await db.workflowCycles
     .where("proposalId")
@@ -422,11 +422,9 @@ export async function getNextDocumentVersion(
   cycleId?: string
 ): Promise<number> {
   const db = getDb();
-  let query = db.documents.where({ proposalId, category });
-  if (cycleId) {
-    query = db.documents.where({ proposalId, category, cycleId });
-  }
-  const docs = await query.toArray();
+  const docs = (await db.documents.where("proposalId").equals(proposalId).toArray()).filter(
+    (d) => d.category === category && (!cycleId || d.cycleId === cycleId)
+  );
   const maxVersion = docs.reduce((max, d) => Math.max(max, d.version ?? 1), 0);
   return maxVersion + 1;
 }

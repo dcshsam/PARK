@@ -9,6 +9,9 @@ import {
   DEFAULT_SPARC_OWNERS,
   DEFAULT_SPARC_MENTORS,
   DEFAULT_GTM_OWNERS,
+  DEFAULT_GTM_HEADS,
+  DEFAULT_DELIVERY_OWNERS,
+  DEFAULT_DELIVERY_HEADS,
   DEFAULT_PROPOSAL_REVIEWERS,
   DEFAULT_PROPOSAL_REGIONS,
   getProjectTypes,
@@ -16,6 +19,9 @@ import {
   getSparcOwners,
   getSparcMentors,
   getGtmOwners,
+  getGtmHeads,
+  getDeliveryOwners,
+  getDeliveryHeads,
   getProposalReviewers,
   getProposalRegions,
   saveProjectTypes,
@@ -23,6 +29,9 @@ import {
   saveSparcOwners,
   saveSparcMentors,
   saveGtmOwners,
+  saveGtmHeads,
+  saveDeliveryOwners,
+  saveDeliveryHeads,
   saveProposalReviewers,
   saveProposalRegions,
 } from "@/lib/workspace-config";
@@ -44,6 +53,15 @@ export function WorkspaceSettings() {
   );
   const [gtmOwners, setGtmOwners] = useState<string[]>(() =>
     typeof window === "undefined" ? DEFAULT_GTM_OWNERS : getGtmOwners()
+  );
+  const [gtmHeads, setGtmHeads] = useState<string[]>(() =>
+    typeof window === "undefined" ? DEFAULT_GTM_HEADS : getGtmHeads()
+  );
+  const [deliveryOwners, setDeliveryOwners] = useState<string[]>(() =>
+    typeof window === "undefined" ? DEFAULT_DELIVERY_OWNERS : getDeliveryOwners()
+  );
+  const [deliveryHeads, setDeliveryHeads] = useState<string[]>(() =>
+    typeof window === "undefined" ? DEFAULT_DELIVERY_HEADS : getDeliveryHeads()
   );
   const [proposalReviewers, setProposalReviewers] = useState<string[]>(() =>
     typeof window === "undefined" ? DEFAULT_PROPOSAL_REVIEWERS : getProposalReviewers()
@@ -78,6 +96,21 @@ export function WorkspaceSettings() {
     saveGtmOwners(items);
   };
 
+  const handleGtmHeadsChange = (items: string[]) => {
+    setGtmHeads(items);
+    saveGtmHeads(items);
+  };
+
+  const handleDeliveryOwnersChange = (items: string[]) => {
+    setDeliveryOwners(items);
+    saveDeliveryOwners(items);
+  };
+
+  const handleDeliveryHeadsChange = (items: string[]) => {
+    setDeliveryHeads(items);
+    saveDeliveryHeads(items);
+  };
+
   const handleProposalReviewersChange = (items: string[]) => {
     setProposalReviewers(items);
     saveProposalReviewers(items);
@@ -94,6 +127,9 @@ export function WorkspaceSettings() {
     saveSparcOwners(DEFAULT_SPARC_OWNERS);
     saveSparcMentors(DEFAULT_SPARC_MENTORS);
     saveGtmOwners(DEFAULT_GTM_OWNERS);
+    saveGtmHeads(DEFAULT_GTM_HEADS);
+    saveDeliveryOwners(DEFAULT_DELIVERY_OWNERS);
+    saveDeliveryHeads(DEFAULT_DELIVERY_HEADS);
     saveProposalReviewers(DEFAULT_PROPOSAL_REVIEWERS);
     saveProposalRegions(DEFAULT_PROPOSAL_REGIONS);
     setTechnologies(DEFAULT_TECHNOLOGIES);
@@ -101,6 +137,9 @@ export function WorkspaceSettings() {
     setSparcOwners(DEFAULT_SPARC_OWNERS);
     setSparcMentors(DEFAULT_SPARC_MENTORS);
     setGtmOwners(DEFAULT_GTM_OWNERS);
+    setGtmHeads(DEFAULT_GTM_HEADS);
+    setDeliveryOwners(DEFAULT_DELIVERY_OWNERS);
+    setDeliveryHeads(DEFAULT_DELIVERY_HEADS);
     setProposalReviewers(DEFAULT_PROPOSAL_REVIEWERS);
     setProposalRegions(DEFAULT_PROPOSAL_REGIONS);
   };
@@ -177,6 +216,33 @@ export function WorkspaceSettings() {
             onChange={handleGtmOwnersChange}
             placeholder="e.g. Global SAP"
             addLabel="Add GTM Owner"
+          />
+
+          <ConfigListEditor
+            title="GTM Heads"
+            description="GTM heads available in the Event 1 lead intake form."
+            items={gtmHeads}
+            onChange={handleGtmHeadsChange}
+            placeholder="e.g. Alex Johnson"
+            addLabel="Add GTM Head"
+          />
+
+          <ConfigListEditor
+            title="Delivery Owners"
+            description="Delivery names available in the Event 1 lead intake form."
+            items={deliveryOwners}
+            onChange={handleDeliveryOwnersChange}
+            placeholder="e.g. Delivery Team"
+            addLabel="Add Delivery Owner"
+          />
+
+          <ConfigListEditor
+            title="Delivery Heads"
+            description="Delivery heads available in the Event 1 lead intake form."
+            items={deliveryHeads}
+            onChange={handleDeliveryHeadsChange}
+            placeholder="e.g. Alex Johnson"
+            addLabel="Add Delivery Head"
           />
 
           <ConfigListEditor

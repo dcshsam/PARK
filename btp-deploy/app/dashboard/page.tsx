@@ -218,7 +218,7 @@ export default function DashboardPage() {
     <div className="space-y-8">
       {/* Hero header */}
       <motion.div
-        initial={{ opacity: 0, y: -12 }}
+        initial={false}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.5 }}
         className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-primary-600 to-indigo-700 p-6 text-white shadow-lg sm:p-8"
@@ -244,7 +244,7 @@ export default function DashboardPage() {
       {/* Proposal Master pipeline — management view */}
       <motion.div
         className="space-y-4"
-        initial={{ opacity: 0, y: 12 }}
+        initial={false}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.5, delay: 0.15 }}
       >
@@ -402,7 +402,7 @@ export default function DashboardPage() {
 
       {/* Quick link to analytics */}
       <motion.div
-        initial={{ opacity: 0, y: 12 }}
+        initial={false}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.5, delay: 0.25 }}
       >
@@ -426,7 +426,7 @@ export default function DashboardPage() {
 
       {/* Team activity insights */}
       <motion.div
-        initial={{ opacity: 0, y: 12 }}
+        initial={false}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.5, delay: 0.4 }}
         className="grid gap-6 lg:grid-cols-3"
@@ -558,7 +558,7 @@ export default function DashboardPage() {
               upcomingActivities.map((activity, i) => (
                 <motion.div
                   key={activity.id}
-                  initial={{ opacity: 0, x: 8 }}
+                  initial={false}
                   animate={{ opacity: 1, x: 0 }}
                   transition={{ duration: 0.25, delay: 0.1 + i * 0.05 }}
                   className="rounded-xl border border-border bg-surface-muted/30 p-3 transition-colors hover:border-primary-200 hover:bg-surface-muted/50"
@@ -605,7 +605,7 @@ function StatCard({
 }) {
   return (
     <motion.div
-      initial={{ opacity: 0, y: 16 }}
+      initial={false}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.4, delay: 0.1 + index * 0.05 }}
     >
@@ -661,4 +661,3 @@ function EmptyState({ message }: { message: string }) {
     </div>
   );
 }
-

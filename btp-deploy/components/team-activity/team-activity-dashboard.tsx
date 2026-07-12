@@ -314,7 +314,7 @@ export function TeamActivityDashboard() {
         </div>
       </div>
 
-      <Card>
+      <Card className="min-w-0 overflow-hidden">
         <CardHeader className="pb-4">
           <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
             <CardTitle className="text-base">Activity Timeline</CardTitle>
@@ -326,7 +326,7 @@ export function TeamActivityDashboard() {
             />
           </div>
         </CardHeader>
-        <CardContent>
+        <CardContent className="min-w-0 overflow-hidden">
           {loading ? (
             <div className="flex h-64 items-center justify-center text-sm text-text-muted">
               Loading team activities…

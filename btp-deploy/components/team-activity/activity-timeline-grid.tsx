@@ -12,13 +12,17 @@ interface ActivityTimelineGridProps {
 
 export function ActivityTimelineGrid({ months, members }: ActivityTimelineGridProps) {
   const weeks = months.flatMap((m) => m.weeks);
+  const gridMinWidth = 192 + weeks.length * 96;
   const today = new Date();
   const todayColIndex = weeks.findIndex((w) => today >= w.start && today <= w.end);
   const todayClass = "border-l-2 border-dashed border-primary-500";
 
   return (
-    <div className="overflow-x-auto rounded-xl border border-border bg-surface shadow-sm">
-      <table className="w-full border-collapse">
+    <div
+      className="max-w-full overflow-x-auto overscroll-x-contain rounded-xl border border-border bg-surface shadow-sm"
+      aria-label="Team activity timeline. Scroll horizontally to view all weeks."
+    >
+      <table className="w-full border-collapse" style={{ minWidth: gridMinWidth }}>
         <thead>
           <tr className="border-b border-border bg-surface-muted">
             <th

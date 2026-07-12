@@ -158,7 +158,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
       </aside>
 
       {/* Mobile header */}
-      <div className="relative z-10 flex flex-1 flex-col">
+      <div className="relative z-10 flex min-w-0 flex-1 flex-col">
         <header className="sticky top-0 z-30 flex h-16 items-center justify-between border-b border-border/60 bg-surface/85 px-4 backdrop-blur-xl lg:px-8">
           <div className="flex items-center gap-3 lg:hidden">
             <Button
@@ -177,6 +177,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
           </div>
           <div className="flex items-center gap-1 sm:gap-2">
             <LlmStatus />
+            <JarvisButton placement="inline" />
             <Button
               variant="ghost"
               size="sm"
@@ -228,7 +229,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
           </div>
         )}
 
-        <main className="flex-1 p-4 lg:p-8">{children}</main>
+        <main className="min-w-0 flex-1 p-4 lg:p-8">{children}</main>
       </div>
 
       {/* Global search command palette */}

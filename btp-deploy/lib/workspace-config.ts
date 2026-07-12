@@ -3,6 +3,9 @@ const PROJECT_TYPES_KEY = "prop-review:project-types";
 const SPARC_OWNERS_KEY = "prop-review:sparc-owners";
 const SPARC_MENTORS_KEY = "prop-review:sparc-mentors";
 const GTM_OWNERS_KEY = "prop-review:gtm-owners";
+const GTM_HEADS_KEY = "prop-review:gtm-heads";
+const DELIVERY_OWNERS_KEY = "prop-review:delivery-owners";
+const DELIVERY_HEADS_KEY = "prop-review:delivery-heads";
 const PROPOSAL_REVIEWERS_KEY = "prop-review:proposal-reviewers";
 const PROPOSAL_REGIONS_KEY = "prop-review:proposal-regions";
 const LEAD_STATUSES_KEY = "prop-review:lead-statuses";
@@ -23,6 +26,11 @@ export const DEFAULT_SPARC_OWNERS: string[] = [];
 export const DEFAULT_SPARC_MENTORS: string[] = [];
 
 export const DEFAULT_GTM_OWNERS: string[] = [];
+
+export const DEFAULT_GTM_HEADS: string[] = [];
+
+export const DEFAULT_DELIVERY_OWNERS: string[] = [];
+export const DEFAULT_DELIVERY_HEADS: string[] = [];
 
 export const DEFAULT_PROPOSAL_REVIEWERS: string[] = [];
 
@@ -112,6 +120,30 @@ export function getGtmOwners(): string[] {
 
 export function saveGtmOwners(owners: string[]): void {
   saveList(GTM_OWNERS_KEY, owners);
+}
+
+export function getGtmHeads(): string[] {
+  return getList(GTM_HEADS_KEY, DEFAULT_GTM_HEADS);
+}
+
+export function saveGtmHeads(heads: string[]): void {
+  saveList(GTM_HEADS_KEY, heads);
+}
+
+export function getDeliveryOwners(): string[] {
+  return getList(DELIVERY_OWNERS_KEY, DEFAULT_DELIVERY_OWNERS);
+}
+
+export function saveDeliveryOwners(owners: string[]): void {
+  saveList(DELIVERY_OWNERS_KEY, owners);
+}
+
+export function getDeliveryHeads(): string[] {
+  return getList(DELIVERY_HEADS_KEY, DEFAULT_DELIVERY_HEADS);
+}
+
+export function saveDeliveryHeads(heads: string[]): void {
+  saveList(DELIVERY_HEADS_KEY, heads);
 }
 
 export function getProposalReviewers(): string[] {

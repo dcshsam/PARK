@@ -125,7 +125,7 @@ export function JarvisPanel() {
   };
 
   return (
-    <div className="fixed bottom-24 right-6 z-40 flex max-h-[70vh] w-[min(24rem,calc(100vw-3rem))] flex-col overflow-hidden rounded-2xl border border-border bg-surface shadow-xl">
+    <div className="fixed bottom-[calc(env(safe-area-inset-bottom)+4.75rem)] right-4 z-40 flex max-h-[70vh] w-[min(24rem,calc(100vw-2rem))] flex-col overflow-hidden rounded-2xl border border-border bg-surface shadow-xl sm:bottom-24 sm:right-6 sm:w-[min(24rem,calc(100vw-3rem))]">
       {/* Header */}
       <div className="flex items-center gap-2 border-b border-border/60 px-4 py-3">
         <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-primary-600 text-white">
