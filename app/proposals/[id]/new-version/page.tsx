@@ -11,7 +11,7 @@ import {
   getActiveDeepRules,
 } from "@/lib/db";
 import { startNewVersionCycle } from "@/lib/workflow-engine";
-import { extractFinalProposalAndContext, extractAllDocumentText } from "@/lib/deep-review/extract";
+import { extractFinalProposalAndContext, extractAllDocumentText, getLatestDocsForCategory } from "@/lib/deep-review/extract";
 import { runDeepReview } from "@/lib/deep-review/engine";
 import { getDefaultStrictness } from "@/lib/deep-review/settings";
 import type { Proposal, UploadedFile, ProposalDocumentCategory } from "@/lib/types";
@@ -103,7 +103,7 @@ export default function NewVersionPage() {
         const { finalProposalText, contextText } = extractFinalProposalAndContext(refreshed);
         const proposalText = finalProposalText.trim() || extractAllDocumentText(refreshed).trim();
         if (proposalText) {
-          const finalDoc = refreshed.documents.find((d) => d.category === "final_proposal");
+          const finalDoc = getLatestDocsForCategory(refreshed, "final_proposal")[0];
           const rules = await getActiveDeepRules();
           const result = await runDeepReview({
             proposalId: refreshed.id,

@@ -24,6 +24,10 @@ import {
   getLeadTypes,
   getLeadVerticals,
   getSparcMentors,
+  getSparcOwners,
+  getGtmHeads,
+  getDeliveryOwners,
+  getDeliveryHeads,
   getGtmOwners,
   getProposalReviewers,
   getProposalRegions,
@@ -39,7 +43,15 @@ import type {
   UploadedFile,
 } from "@/lib/types";
 import { cn } from "@/lib/utils";
-import { Loader2, Save, X, Check, ChevronLeft, ChevronRight, Plus, Pencil, Trash2, ExternalLink } from "lucide-react";
+import { generateProposalDeck, downloadBlob } from "@/lib/proposal-ai";
+import { invokeLlm } from "@/lib/deep-review/llm";
+import {
+  sampleLeadBasics,
+  sampleLeadDocuments,
+  sampleLeadPreQual,
+  buildSampleDueDiligenceItems,
+} from "@/lib/sample-lead";
+import { Loader2, Save, X, Check, ChevronLeft, ChevronRight, Plus, Pencil, Trash2, ExternalLink, Sparkles } from "lucide-react";
 
 function getEventTimestamp(lead: Lead | undefined, eventNumber: number): Date | undefined {
   if (!lead?.eventData) return undefined;
@@ -60,6 +72,49 @@ function formatDuration(start: Date, end: Date): string {
   return `${days}d`;
 }
 
+type EventPausePeriod = { startedAt: string | Date; endedAt?: string | Date; reason: string };
+
+function getEventPausePeriods(lead: Lead | undefined, eventNumber: number): EventPausePeriod[] {
+  const data = lead?.eventData?.[`event${eventNumber}`] as { pausePeriods?: EventPausePeriod[] } | undefined;
+  return data?.pausePeriods ?? [];
+}
+
+function getActivePausedEvent(lead: Lead | undefined): number | undefined {
+  if (!lead?.eventData) return undefined;
+  for (let eventNumber = 1; eventNumber <= eventLabels.length; eventNumber++) {
+    if (getEventPausePeriods(lead, eventNumber).some((pause) => !pause.endedAt)) return eventNumber;
+  }
+  return undefined;
+}
+
+function effectiveEventDurationMs(start: Date, end: Date, pauses: EventPausePeriod[], now: Date): number {
+  const endMs = end.getTime();
+  const pausedMs = pauses.reduce((total, pause) => {
+    const pauseStart = new Date(pause.startedAt).getTime();
+    const pauseEnd = Math.min(pause.endedAt ? new Date(pause.endedAt).getTime() : now.getTime(), endMs);
+    return total + Math.max(0, pauseEnd - pauseStart);
+  }, 0);
+  return Math.max(0, endMs - start.getTime() - pausedMs);
+}
+
+function formatDurationMs(diffMs: number): string {
+  const seconds = Math.floor(diffMs / 1000);
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h`;
+  return `${Math.floor(hours / 24)}d`;
+}
+
+function totalPauseDurationMs(pauses: EventPausePeriod[], now: Date): number {
+  return pauses.reduce((total, pause) => {
+    const start = new Date(pause.startedAt).getTime();
+    const end = pause.endedAt ? new Date(pause.endedAt).getTime() : now.getTime();
+    return total + Math.max(0, end - start);
+  }, 0);
+}
+
 function getSegmentDurations(lead: Lead | undefined): (string | null)[] {
   const labelsCount = eventLabels.length;
   const durations: (string | null)[] = [];
@@ -67,7 +122,7 @@ function getSegmentDurations(lead: Lead | undefined): (string | null)[] {
     const start = getEventTimestamp(lead, i + 1);
     const end = getEventTimestamp(lead, i + 2);
     if (start && end) {
-      durations.push(formatDuration(start, end));
+      durations.push(formatDurationMs(effectiveEventDurationMs(start, end, getEventPausePeriods(lead, i + 1), end)));
     } else if (start && !end && lead?.currentEvent === i + 2) {
       durations.push("In progress");
     } else {
@@ -162,8 +217,6 @@ const dueDiligenceStatusBadge: Record<DueDiligenceStatus, string> = {
   blocked: "bg-status-danger-bg text-status-danger-text",
 };
 
-const proposalStatusLabels: Record<ProposalStatus, string> = { ...dueDiligenceStatusLabels };
-
 interface DueDiligenceItem {
   id: string;
   type: "meeting" | "analysis";
@@ -180,6 +233,122 @@ interface DueDiligenceItem {
 type LeadFormProps = {
   lead?: Lead;
 };
+
+type LeadEventActivity = {
+  id: string;
+  action: "created" | "updated" | "paused" | "resumed";
+  timestamp: string | Date;
+  actor: string;
+  changes?: string[];
+};
+
+const event1ActivityLabels: Array<[keyof Lead, string]> = [
+  ["leadName", "Lead name"],
+  ["clientName", "Customer / client"],
+  ["kytesId", "Kytes ID"],
+  ["receivedVia", "Received via"],
+  ["hgStatus", "HG status"],
+  ["date", "Date"],
+  ["gtmName", "GTM owner"],
+  ["gtmHead", "GTM head"],
+  ["deliveryName", "Delivery name"],
+  ["deliveryHead", "Delivery head"],
+  ["sparcOwner", "SPARC owner"],
+  ["vertical", "VD vertical"],
+  ["leadType", "Lead type"],
+  ["sparcMentor", "SPARC mentor"],
+  ["proposalReviewer", "Proposal reviewer"],
+  ["proposalRegion", "Proposal region"],
+  ["requirementSummary", "Requirement summary"],
+  ["status", "Status"],
+];
+
+function event1ChangeLabels(lead: Lead, payload: Record<string, unknown>): string[] {
+  const changed = event1ActivityLabels
+    .filter(([key]) => {
+      const before = key === "date" && lead.date ? new Date(lead.date).toISOString().slice(0, 10) : lead[key];
+      const after = key === "date" && payload[key] ? new Date(payload[key] as string | Date).toISOString().slice(0, 10) : payload[key];
+      return JSON.stringify(before ?? "") !== JSON.stringify(after ?? "");
+    })
+    .map(([, label]) => label);
+
+  const oldDocuments = JSON.stringify((lead.documents ?? []).map((doc) => `${doc.category}:${doc.name}:${doc.size}`));
+  const newDocuments = JSON.stringify(((payload.documents as Lead["documents"]) ?? []).map((doc) => `${doc.category}:${doc.name}:${doc.size}`));
+  if (oldDocuments !== newDocuments) changed.push("Attached documents");
+  return changed;
+}
+
+function appendEventActivity(
+  eventData: Record<string, unknown>,
+  eventKey: string,
+  actor: string,
+  changes: string[],
+): Record<string, unknown> {
+  const current = (eventData[eventKey] ?? {}) as Record<string, unknown>;
+  const previous = (current.activityLog ?? []) as LeadEventActivity[];
+  const now = new Date();
+  return {
+    ...eventData,
+    [eventKey]: {
+      ...current,
+      activityLog: [
+        ...previous,
+        {
+          id: crypto.randomUUID(),
+          action: previous.length ? "updated" : "created",
+          timestamp: now,
+          actor,
+          changes,
+        },
+      ],
+    },
+  };
+}
+
+function EventActivityLog({ eventNumber, activityLog, activityTitle }: { eventNumber: number; activityLog?: LeadEventActivity[]; activityTitle?: string }) {
+  const title = activityTitle ?? `Event ${eventNumber}`;
+  return (
+    <div className="border-t border-border pt-6">
+      <div className="mb-3 flex items-center justify-between">
+        <div>
+          <h3 className="text-sm font-semibold text-text-primary">{title} activity</h3>
+          <p className="text-xs text-text-tertiary">Creation and changes saved for this event.</p>
+        </div>
+        <span className="rounded-full bg-surface-muted px-2 py-1 text-[11px] text-text-secondary">
+          {activityLog?.length ?? 0} {activityLog?.length === 1 ? "entry" : "entries"}
+        </span>
+      </div>
+      {activityLog?.length ? (
+        <div className="overflow-hidden rounded-xl border border-border">
+          <div className="divide-y divide-border">
+            {[...activityLog].reverse().map((activity) => (
+              <div key={activity.id} className="flex flex-col gap-1 bg-surface px-4 py-3 text-sm sm:flex-row sm:items-start sm:justify-between">
+                <div>
+                  <p className="font-medium text-text-primary">
+                    {activity.action === "created"
+                      ? `${title} created`
+                      : activity.action === "paused"
+                        ? `${title} paused`
+                        : activity.action === "resumed"
+                          ? `${title} resumed`
+                          : `${title} updated`}
+                  </p>
+                  {activity.changes?.length ? <p className="mt-0.5 text-xs text-text-secondary">Changed: {activity.changes.join(", ")}</p> : null}
+                  <p className="mt-1 text-xs text-text-tertiary">By {activity.actor}</p>
+                </div>
+                <time className="shrink-0 text-xs text-text-tertiary" dateTime={new Date(activity.timestamp).toISOString()}>
+                  {new Date(activity.timestamp).toLocaleString()}
+                </time>
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : (
+        <p className="rounded-xl border border-dashed border-border px-4 py-3 text-xs text-text-tertiary">Activity will appear here after this event is saved.</p>
+      )}
+    </div>
+  );
+}
 
 /**
  * One-shot prefill left by the Jarvis assistant's create_lead_draft tool.
@@ -202,12 +371,91 @@ export function LeadForm({ lead }: LeadFormProps) {
   const { currentProfile } = useProfile();
   const isCreate = !lead;
 
-  const initialStep = lead?.currentEvent ?? 1;
+  const pausedEvent = getActivePausedEvent(lead);
+  const initialStep = pausedEvent ?? lead?.currentEvent ?? 1;
   const [step, setStep] = useState(initialStep);
   const [submitting, setSubmitting] = useState(false);
+  const [clockNow, setClockNow] = useState(() => new Date());
+  const [timingOverrides, setTimingOverrides] = useState<Record<number, EventPausePeriod[]>>({});
+  const [activityOverrides, setActivityOverrides] = useState<Record<number, LeadEventActivity[]>>({});
+  const [eventDataOverrides, setEventDataOverrides] = useState<Record<number, Record<string, unknown>>>({});
   const [draftItem, setDraftItem] = useState<DueDiligenceItem | null>(null);
   const [pauseTargetId, setPauseTargetId] = useState<string | null>(null);
   const [pauseReasonDraft, setPauseReasonDraft] = useState("");
+
+  // Event 4 — AI-generated proposal deck (PPT) built from Events 1-3.
+  const [generatingPpt, setGeneratingPpt] = useState(false);
+  const [pptError, setPptError] = useState<string | null>(null);
+  const [updatingSummary, setUpdatingSummary] = useState(false);
+  const [summaryError, setSummaryError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setClockNow(new Date()), 1000);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  useEffect(() => {
+    if (!lead || !pausedEvent || lead.currentEvent === pausedEvent) return;
+    updateLead(lead.id, { currentEvent: pausedEvent });
+  }, [lead, pausedEvent]);
+
+  const pausePeriodsForEvent = (eventNumber: number): EventPausePeriod[] =>
+    timingOverrides[eventNumber] ??
+    ((eventDataOverrides[eventNumber]?.pausePeriods as EventPausePeriod[] | undefined) ?? getEventPausePeriods(lead, eventNumber));
+
+  const eventTimestampForView = (eventNumber: number): Date | undefined => {
+    const data = eventDataOverrides[eventNumber] ?? lead?.eventData?.[`event${eventNumber}`];
+    const completedAt = (data as { completedAt?: string | number | Date } | undefined)?.completedAt;
+    return completedAt ? new Date(completedAt) : undefined;
+  };
+
+  const syncSavedEventData = (savedLead: Lead, eventNumber: number) => {
+    const savedEvent = savedLead.eventData?.[`event${eventNumber}`] as Record<string, unknown> | undefined;
+    if (savedEvent) setEventDataOverrides((prev) => ({ ...prev, [eventNumber]: savedEvent }));
+  };
+
+  const setEventPaused = async (eventNumber: number, reason?: string) => {
+    if (!lead) return;
+    const existing = pausePeriodsForEvent(eventNumber);
+    const active = existing.find((pause) => !pause.endedAt);
+    const now = new Date();
+    const pausePeriods = reason
+      ? [...existing, { startedAt: now, reason }]
+      : existing.map((pause) => (pause === active ? { ...pause, endedAt: now } : pause));
+    const existingEvent = (lead.eventData?.[`event${eventNumber}`] ?? {}) as Record<string, unknown>;
+    const existingActivity = (existingEvent.activityLog ?? []) as LeadEventActivity[];
+    const activityLog = [
+      ...existingActivity,
+      {
+        id: crypto.randomUUID(),
+        action: reason ? "paused" as const : "resumed" as const,
+        timestamp: now,
+        actor: currentProfile?.name ?? "System",
+        changes: reason ? [`Pause reason: ${reason}`] : ["Timing resumed"],
+      },
+    ];
+    setTimingOverrides((prev) => ({ ...prev, [eventNumber]: pausePeriods }));
+    setActivityOverrides((prev) => ({ ...prev, [eventNumber]: activityLog }));
+    await updateLead(lead.id, {
+      eventData: {
+        ...(lead.eventData ?? {}),
+        [`event${eventNumber}`]: {
+          ...existingEvent,
+          pausePeriods,
+          activityLog,
+        },
+      },
+    });
+  };
+
+  const mergeEventTiming = (eventData: Record<string, unknown>, eventNumber: number): Record<string, unknown> => ({
+    ...eventData,
+    [`event${eventNumber}`]: {
+      ...((eventData[`event${eventNumber}`] ?? {}) as Record<string, unknown>),
+      pausePeriods: pausePeriodsForEvent(eventNumber),
+      ...(activityOverrides[eventNumber] ? { activityLog: activityOverrides[eventNumber] } : {}),
+    },
+  });
 
   // Event 5 — Proposal Review (SPARC), mapped to the existing Proposal review workflow.
   const [linkedProposal, setLinkedProposal] = useState<Proposal | null>(null);
@@ -221,14 +469,16 @@ export function LeadForm({ lead }: LeadFormProps) {
       .finally(() => setLoadingProposal(false));
   }, [lead?.proposalId]);
 
-  const event2Data = (lead?.eventData?.event2 ?? {}) as Record<string, string>;
-  const event3Data = (lead?.eventData?.event3 ?? {}) as { items?: DueDiligenceItem[] };
+  const event2Data = (lead?.eventData?.event2 ?? {}) as Record<string, string> & { activityLog?: LeadEventActivity[] };
+  const event1Data = (lead?.eventData?.event1 ?? {}) as { activityLog?: LeadEventActivity[]; completedAt?: Date };
+  const event3Data = (lead?.eventData?.event3 ?? {}) as { items?: DueDiligenceItem[]; activityLog?: LeadEventActivity[] };
   const event4Data = (lead?.eventData?.event4 ?? {}) as {
     startDate?: string;
     endDate?: string;
     status?: ProposalStatus;
     pauseReason?: string;
     attachments?: Omit<UploadedFile, "id" | "proposalId" | "uploadedAt">[];
+    activityLog?: LeadEventActivity[];
   };
   const event7Data = (lead?.eventData?.event7 ?? {}) as {
     startDate?: string;
@@ -243,6 +493,7 @@ export function LeadForm({ lead }: LeadFormProps) {
     nextSteps?: string;
     followUpDate?: string;
     completedAt?: Date;
+    activityLog?: LeadEventActivity[];
   };
   const event8Data = (lead?.eventData?.event8 ?? {}) as {
     outcome?: RetroOutcome;
@@ -250,6 +501,7 @@ export function LeadForm({ lead }: LeadFormProps) {
     improve?: string;
     learnings?: string;
     completedAt?: Date;
+    activityLog?: LeadEventActivity[];
   };
 
   const [form, setForm] = useState({
@@ -259,6 +511,10 @@ export function LeadForm({ lead }: LeadFormProps) {
     hgStatus: lead?.hgStatus ?? "",
     date: lead?.date ? new Date(lead.date).toISOString().split("T")[0] : "",
     gtmName: lead?.gtmName ?? currentProfile?.name ?? "",
+    gtmHead: lead?.gtmHead ?? "",
+    deliveryName: lead?.deliveryName ?? "",
+    deliveryHead: lead?.deliveryHead ?? "",
+    sparcOwner: lead?.sparcOwner ?? "",
     vertical: lead?.vertical ?? "",
     leadType: lead?.leadType ?? "",
     kytesId: lead?.kytesId ?? "",
@@ -268,7 +524,7 @@ export function LeadForm({ lead }: LeadFormProps) {
     proposalReviewer: lead?.proposalReviewer ?? "",
     proposalRegion: lead?.proposalRegion ?? "",
     status: lead?.status ?? "new",
-    currentEvent: lead?.currentEvent ?? 1,
+    currentEvent: pausedEvent ?? lead?.currentEvent ?? 1,
     documents: {
       lead_mail: (lead?.documents ?? []).filter((d) => d.category === "lead_mail") as Omit<
         UploadedFile,
@@ -294,6 +550,8 @@ export function LeadForm({ lead }: LeadFormProps) {
     // Event 2
     preQualified: event2Data.preQualified ?? "",
     preQualComments: event2Data.comments ?? "",
+    drbApproved: event2Data.drbApproved ?? "",
+    drbApprovedDate: event2Data.drbApprovedDate ?? "",
     // Event 3
     dueDiligenceItems: (event3Data.items ?? []).map((item) => ({
       ...(item as DueDiligenceItem),
@@ -349,6 +607,10 @@ export function LeadForm({ lead }: LeadFormProps) {
     const teamMembers = getTeamMembers();
     return combineAssignableNames(getSparcMentors(), "sparc_mentor", teamMembers);
   }, []);
+  const sparcOwners = useMemo(() => {
+    const teamMembers = getTeamMembers();
+    return combineAssignableNames(getSparcOwners(), "sparc_owner", teamMembers);
+  }, []);
   const proposalReviewers = useMemo(() => {
     const teamMembers = getTeamMembers();
     return combineAssignableNames(getProposalReviewers(), "proposal_reviewer", teamMembers);
@@ -363,6 +625,18 @@ export function LeadForm({ lead }: LeadFormProps) {
     return combined;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+  const gtmHeads = useMemo(() => {
+    const teamMembers = getTeamMembers();
+    return combineAssignableNames(getGtmHeads(), "gtm_head", teamMembers);
+  }, []);
+  const deliveryOwners = useMemo(() => {
+    const teamMembers = getTeamMembers();
+    return combineAssignableNames(getDeliveryOwners(), "proposal_owner", teamMembers);
+  }, []);
+  const deliveryHeads = useMemo(() => {
+    const teamMembers = getTeamMembers();
+    return combineAssignableNames(getDeliveryHeads(), "proposal_owner", teamMembers);
+  }, []);
 
   const updateDoc = (category: LeadDocumentCategory, files: Omit<UploadedFile, "id" | "proposalId" | "uploadedAt">[]) => {
     setForm((prev) => ({ ...prev, documents: { ...prev.documents, [category]: files } }));
@@ -376,6 +650,36 @@ export function LeadForm({ lead }: LeadFormProps) {
     ...form.documents.lead_pre_qual_form,
   ];
 
+  const handleUpdateRequirementSummary = async () => {
+    const documentsWithText = allDocuments.filter((doc) => doc.extractedText?.trim());
+    if (documentsWithText.length === 0) {
+      setSummaryError("Attach a document with readable text first.");
+      return;
+    }
+
+    setUpdatingSummary(true);
+    setSummaryError(null);
+    try {
+      const documentText = documentsWithText
+        .map((doc) => `### ${doc.name}\n${doc.extractedText!.trim()}`)
+        .join("\n\n")
+        .slice(0, 12000);
+      const result = await invokeLlm(
+        `Create a concise, business-ready requirement summary from the attached customer documents below.\n\n` +
+          `Capture the customer's goals, current situation, key needs, scope, constraints, and expected outcomes. ` +
+          `Use only information present in the documents. Do not invent details. Return only the summary in plain text, ` +
+          `using short paragraphs or bullets.\n\n${documentText}`,
+        900,
+        0.2,
+      );
+      setForm((prev) => ({ ...prev, requirementSummary: result.trim() }));
+    } catch (err) {
+      setSummaryError(err instanceof Error ? err.message : "Could not update the requirement summary.");
+    } finally {
+      setUpdatingSummary(false);
+    }
+  };
+
   const canProceed = (() => {
     if (step === 1) {
       return (
@@ -387,7 +691,9 @@ export function LeadForm({ lead }: LeadFormProps) {
       );
     }
     if (step === 2) {
-      return form.preQualified.trim() !== "";
+      return form.preQualified.trim() !== "" &&
+        form.drbApproved.trim() !== "" &&
+        (form.drbApproved !== "yes" || form.drbApprovedDate.trim() !== "");
     }
     if (step === 3) {
       return true;
@@ -408,6 +714,10 @@ export function LeadForm({ lead }: LeadFormProps) {
     hgStatus: form.hgStatus,
     date: form.date ? new Date(form.date) : undefined,
     gtmName: form.gtmName,
+    gtmHead: form.gtmHead || undefined,
+    deliveryName: form.deliveryName || undefined,
+    deliveryHead: form.deliveryHead || undefined,
+    sparcOwner: form.sparcOwner || undefined,
     vertical: form.vertical,
     leadType: form.leadType,
     requirementSummary: form.requirementSummary,
@@ -426,67 +736,96 @@ export function LeadForm({ lead }: LeadFormProps) {
     })),
   });
 
-  const buildEvent2Payload = (completedAt: Date) => ({
+  const buildEvent2Payload = (completedAt?: Date) => ({
     eventData: {
       ...(lead?.eventData ?? {}),
       event2: {
         preQualified: form.preQualified as "yes" | "no",
         comments: form.preQualComments.trim(),
+        drbApproved: form.drbApproved as "yes" | "no" | "na",
+        drbApprovedDate: form.drbApproved === "yes" ? form.drbApprovedDate : "",
         completedAt,
       },
     },
   });
 
-  const saveCurrentStep = async (): Promise<Lead | undefined> => {
+  const saveCurrentStep = async (advance = false): Promise<Lead | undefined> => {
     if (!canProceed) return undefined;
 
     if (isCreate && step === 1) {
       const now = new Date();
       return addLead({
         ...buildEvent1Payload(),
-        currentEvent: 2,
+        currentEvent: advance ? 2 : 1,
         eventData: {
-          event1: { completedAt: now },
+          event1: {
+            completedAt: advance ? now : undefined,
+            activityLog: [{
+              id: crypto.randomUUID(),
+              action: "created",
+              timestamp: now,
+              actor: currentProfile?.name ?? "System",
+              changes: ["Lead Initiation created"],
+            }],
+          },
         },
       });
     }
 
     if (!lead) return undefined;
 
-    const nextEvent = Math.min(eventLabels.length, Math.max(form.currentEvent, step + 1));
     const now = new Date();
+    const eventPaused = pausePeriodsForEvent(step).some((pause) => !pause.endedAt);
+    const nextEvent = advance && !eventPaused
+      ? Math.min(eventLabels.length, Math.max(form.currentEvent, step + 1))
+      : Math.max(form.currentEvent, step);
     if (step === 1) {
+      const event1Payload = buildEvent1Payload();
+      const changes = event1ChangeLabels(lead, event1Payload);
+      const activityLog = changes.length > 0
+        ? [
+            ...(event1Data.activityLog ?? []),
+            {
+              id: crypto.randomUUID(),
+              action: "updated" as const,
+              timestamp: now,
+              actor: currentProfile?.name ?? "System",
+              changes,
+            },
+          ]
+        : event1Data.activityLog ?? [];
       return updateLead(lead.id, {
-        ...buildEvent1Payload(),
+        ...event1Payload,
         currentEvent: nextEvent,
         eventData: {
           ...(lead.eventData ?? {}),
-          event1: { ...(lead.eventData?.event1 ?? {}), completedAt: now },
+          event1: { ...(lead.eventData?.event1 ?? {}), completedAt: advance && !eventPaused ? now : undefined, activityLog: activityOverrides[1] ?? activityLog, pausePeriods: pausePeriodsForEvent(1) },
         },
       });
     }
     if (step === 2) {
+      const eventData = buildEvent2Payload(advance && !eventPaused ? now : undefined).eventData;
       return updateLead(lead.id, {
         currentEvent: nextEvent,
         ...buildEvent1Payload(),
-        ...buildEvent2Payload(now),
+        eventData: mergeEventTiming(appendEventActivity(eventData, "event2", currentProfile?.name ?? "System", ["Pre-qualification outcome", "DRB approval", "DRB approval date", "Comments", "Attached documents"]), 2),
       });
     }
     if (step === 3) {
       return updateLead(lead.id, {
         currentEvent: nextEvent,
         ...buildEvent1Payload(),
-        eventData: {
+        eventData: mergeEventTiming(appendEventActivity({
           ...(lead.eventData ?? {}),
-          event3: { items: form.dueDiligenceItems, completedAt: now },
-        },
+          event3: { items: form.dueDiligenceItems, completedAt: advance && !eventPaused ? now : undefined },
+        }, "event3", currentProfile?.name ?? "System", ["Due diligence entries"]), 3),
       });
     }
     if (step === 4) {
       return updateLead(lead.id, {
         currentEvent: nextEvent,
         ...buildEvent1Payload(),
-        eventData: {
+        eventData: mergeEventTiming(appendEventActivity({
           ...(lead.eventData ?? {}),
           event4: {
             startDate: form.proposalStartDate,
@@ -494,9 +833,9 @@ export function LeadForm({ lead }: LeadFormProps) {
             status: form.proposalStatus,
             pauseReason: form.proposalPauseReason.trim(),
             attachments: form.proposalAttachments,
-            completedAt: now,
+            completedAt: advance && !eventPaused ? now : undefined,
           },
-        },
+        }, "event4", currentProfile?.name ?? "System", ["Proposal dates", "Proposal status", "Pause / block reason", "Attached documents"]), 4),
       });
     }
     return undefined;
@@ -505,8 +844,9 @@ export function LeadForm({ lead }: LeadFormProps) {
   const handleSave = async () => {
     setSubmitting(true);
     try {
-      const result = await saveCurrentStep();
+      const result = await saveCurrentStep(false);
       if (result) {
+        syncSavedEventData(result, step);
         setForm((prev) => ({ ...prev, currentEvent: result.currentEvent }));
         if (isCreate) {
           router.push(`/leads/${result.id}`);
@@ -521,9 +861,10 @@ export function LeadForm({ lead }: LeadFormProps) {
     if (!canProceed) return;
     setSubmitting(true);
     try {
-      const result = await saveCurrentStep();
+      const result = await saveCurrentStep(true);
       if (result) {
-        const nextStep = Math.min(step + 1, eventLabels.length);
+        syncSavedEventData(result, step);
+        const nextStep = result.currentEvent > step ? Math.min(step + 1, eventLabels.length) : step;
         setStep(nextStep);
         setForm((prev) => ({ ...prev, currentEvent: result.currentEvent }));
         if (isCreate) {
@@ -541,6 +882,98 @@ export function LeadForm({ lead }: LeadFormProps) {
     }
   };
 
+  // One-click sample fill for Events 1-3 (mirrors "Load sample proposal" on
+  // the proposal form). Only sets form state — walk through Next to save each
+  // event as usual.
+  const loadSampleLeadData = () => {
+    setForm((prev) => ({
+      ...prev,
+      // Event 1 — Lead Initiation
+      leadName: sampleLeadBasics.leadName,
+      clientName: sampleLeadBasics.clientName,
+      kytesId: sampleLeadBasics.kytesId,
+      receivedVia: sampleLeadBasics.receivedVia,
+      hgStatus: sampleLeadBasics.hgStatus,
+      vertical: sampleLeadBasics.vertical,
+      leadType: sampleLeadBasics.leadType,
+      date: sampleLeadBasics.date,
+      requirementSummary: sampleLeadBasics.requirementSummary,
+      documents: {
+        lead_mail: sampleLeadDocuments.filter((d) => d.category === "lead_mail"),
+        lead_mom: sampleLeadDocuments.filter((d) => d.category === "lead_mom"),
+        lead_discussion: sampleLeadDocuments.filter((d) => d.category === "lead_discussion"),
+        lead_customer_doc: sampleLeadDocuments.filter((d) => d.category === "lead_customer_doc"),
+        lead_pre_qual_form: sampleLeadDocuments.filter((d) => d.category === "lead_pre_qual_form"),
+      },
+      // Event 2 — Pre-Qualification
+      preQualified: sampleLeadPreQual.preQualified,
+      preQualComments: sampleLeadPreQual.comments,
+      // Event 3 — Due Diligence
+      dueDiligenceItems: buildSampleDueDiligenceItems(),
+    }));
+  };
+
+  // Consolidate the customer expectations captured in Events 1-3 and have the
+  // AI produce a proposal deck (.pptx). Downloads the file and attaches it to
+  // the Event 4 proposal attachments so it's saved with the lead.
+  const handleGenerateProposalPpt = async () => {
+    setGeneratingPpt(true);
+    setPptError(null);
+    try {
+      const { blob, base64 } = await generateProposalDeck({
+        leadName: form.leadName,
+        clientName: form.clientName,
+        kytesId: form.kytesId,
+        vertical: form.vertical,
+        leadType: form.leadType,
+        gtmName: form.gtmName,
+        requirementSummary: form.requirementSummary,
+        documents: allDocuments.map((doc) => ({
+          name: doc.name,
+          category: doc.category as string,
+          extractedText: doc.extractedText,
+        })),
+        preQualified: form.preQualified,
+        preQualComments: form.preQualComments,
+        dueDiligenceItems: form.dueDiligenceItems.map((item) => ({
+          type: item.type,
+          title: item.title,
+          startDate: item.startDate,
+          endDate: item.endDate,
+          status: item.status,
+          conductedBy: item.conductedBy,
+          summary: item.summary,
+        })),
+        proposalStartDate: form.proposalStartDate,
+        proposalEndDate: form.proposalEndDate,
+      });
+
+      const mimeType =
+        "application/vnd.openxmlformats-officedocument.presentationml.presentation";
+      const niceName = `${form.clientName || form.leadName || "Proposal"} Proposal.pptx`;
+      downloadBlob(blob, niceName);
+
+      setForm((prev) => ({
+        ...prev,
+        proposalAttachments: [
+          ...prev.proposalAttachments,
+          {
+            category: "lead_proposal" as DocumentCategory,
+            name: niceName,
+            size: blob.size,
+            mimeType,
+            content: base64,
+            extractedText: "AI-generated proposal presentation created from Events 1-3.",
+          },
+        ],
+      }));
+    } catch (err) {
+      setPptError(err instanceof Error ? err.message : "Proposal generation failed");
+    } finally {
+      setGeneratingPpt(false);
+    }
+  };
+
   const proposalInitialValues = {
     title: form.leadName || (form.kytesId ? `${form.kytesId} Proposal` : ""),
     clientName: form.clientName,
@@ -548,6 +981,7 @@ export function LeadForm({ lead }: LeadFormProps) {
     technology: form.vertical,
     projectType: form.leadType,
     gtmOwner: form.gtmName,
+    sparcOwner: form.sparcOwner,
     sparcMentor: form.sparcMentor,
     proposalReviewer: form.proposalReviewer,
     proposalRegion: form.proposalRegion,
@@ -569,9 +1003,25 @@ export function LeadForm({ lead }: LeadFormProps) {
     await applyWorkflowAction(created.id, { type: "start_proposal_creation" });
     const reviewReady = await applyWorkflowAction(created.id, { type: "submit_for_review" });
 
-    await updateLead(lead.id, { proposalId: created.id, currentEvent: Math.max(form.currentEvent, REVIEW_EVENT_START) });
+    await updateLead(lead.id, {
+      proposalId: created.id,
+      currentEvent: Math.max(form.currentEvent, REVIEW_EVENT_START),
+      eventData: appendEventActivity(lead.eventData ?? {}, "event5", currentProfile?.name ?? "System", ["Proposal review started"]),
+    });
     setLinkedProposal(reviewReady);
     setForm((prev) => ({ ...prev, currentEvent: Math.max(prev.currentEvent, REVIEW_EVENT_START) }));
+  };
+
+  const handleLinkedProposalChange = async (proposal: Proposal) => {
+    setLinkedProposal(proposal);
+    if (!lead) return;
+    const cycleType = proposal.workflowStage ? getCycleType(proposal.workflowStage) : null;
+    const eventNumber = cycleType === "delivery" ? 6 : cycleType === "proposal" ? 5 : null;
+    if (!eventNumber) return;
+    const updated = await updateLead(lead.id, {
+      eventData: appendEventActivity(lead.eventData ?? {}, `event${eventNumber}`, currentProfile?.name ?? "System", ["Proposal workflow changed"]),
+    });
+    if (updated) setForm((prev) => ({ ...prev, currentEvent: Math.max(prev.currentEvent, updated.currentEvent) }));
   };
 
   // Event 7 — Customer Pitch & Feedback: capture the pitch details and unlock
@@ -580,9 +1030,10 @@ export function LeadForm({ lead }: LeadFormProps) {
     if (!lead || !form.pitchStartDate) return;
     setSubmitting(true);
     try {
+      const eventPaused = pausePeriodsForEvent(PITCH_EVENT).some((pause) => !pause.endedAt);
       const updated = await updateLead(lead.id, {
-        currentEvent: Math.max(form.currentEvent, RETRO_EVENT),
-        eventData: {
+        currentEvent: eventPaused ? PITCH_EVENT : Math.max(form.currentEvent, RETRO_EVENT),
+        eventData: mergeEventTiming(appendEventActivity({
           ...(lead.eventData ?? {}),
           event7: {
             startDate: form.pitchStartDate,
@@ -596,9 +1047,9 @@ export function LeadForm({ lead }: LeadFormProps) {
             responseNotes: form.pitchResponseNotes.trim(),
             nextSteps: form.pitchNextSteps.trim(),
             followUpDate: form.pitchFollowUpDate,
-            completedAt: event7Data.completedAt ?? new Date(),
+            completedAt: eventPaused ? undefined : event7Data.completedAt ?? new Date(),
           },
-        },
+        }, "event7", currentProfile?.name ?? "System", ["Pitch details", "Meeting feedback", "Customer response", "Next steps", "Attached pitch deck"]), 7),
       });
       if (updated) {
         setForm((prev) => ({ ...prev, currentEvent: updated.currentEvent }));
@@ -614,20 +1065,21 @@ export function LeadForm({ lead }: LeadFormProps) {
     if (!lead || !form.retroOutcome) return;
     setSubmitting(true);
     try {
+      const eventPaused = pausePeriodsForEvent(RETRO_EVENT).some((pause) => !pause.endedAt);
       const outcome = retroOutcomeOptions.find((o) => o.value === form.retroOutcome);
       const updated = await updateLead(lead.id, {
         status: outcome?.leadStatus ?? lead.status,
         currentEvent: RETRO_EVENT,
-        eventData: {
+        eventData: mergeEventTiming(appendEventActivity({
           ...(lead.eventData ?? {}),
           event8: {
             outcome: form.retroOutcome,
             wentWell: form.retroWentWell.trim(),
             improve: form.retroImprove.trim(),
             learnings: form.retroLearnings.trim(),
-            completedAt: event8Data.completedAt ?? new Date(),
+            completedAt: eventPaused ? undefined : event8Data.completedAt ?? new Date(),
           },
-        },
+        }, "event8", currentProfile?.name ?? "System", ["Final outcome", "What went well", "What could be improved", "Key learnings"]), 8),
       });
       if (updated) {
         setForm((prev) => ({ ...prev, status: updated.status, currentEvent: updated.currentEvent }));
@@ -739,7 +1191,7 @@ export function LeadForm({ lead }: LeadFormProps) {
     step === PITCH_EVENT ||
     step === RETRO_EVENT ||
     (!loadingProposal && !linkedProposal);
-  const eventHeroNow = new Date();
+  const eventHeroNow = clockNow;
   // Events 5-6 don't write completedAt into eventData (they're proposal-driven),
   // so the pitch and retro events fall back to the relevant cycle's completion time.
   const cycleCompletedAt = (cycleType: ReviewCycleType): Date | undefined =>
@@ -751,24 +1203,30 @@ export function LeadForm({ lead }: LeadFormProps) {
       ? lead
         ? new Date(lead.createdAt)
         : eventHeroNow
-      : (getEventTimestamp(lead, step - 1) ??
+      : (eventTimestampForView(step - 1) ??
         (step === PITCH_EVENT
           ? cycleCompletedAt("delivery")
           : step === RETRO_EVENT
             ? cycleCompletedAt("customer")
             : undefined));
-  const eventHeroEnd = getEventTimestamp(lead, step);
+  const eventHeroPauses = pausePeriodsForEvent(step);
+  const activeEventPause = eventHeroPauses.find((pause) => !pause.endedAt);
+  const eventHeroEnd = activeEventPause ? undefined : eventTimestampForView(step);
   const eventHeroStatus = eventHeroEnd
     ? "Completed"
+    : activeEventPause
+      ? "Paused"
     : step === form.currentEvent
       ? "In progress"
       : step < form.currentEvent
         ? "Completed"
         : "Not started";
+  const eventPausedMs = totalPauseDurationMs(eventHeroPauses, eventHeroNow);
   const eventHeroTimeIn = eventHeroStart
-    ? formatDuration(eventHeroStart, eventHeroEnd ?? eventHeroNow)
+    ? formatDurationMs(effectiveEventDurationMs(eventHeroStart, eventHeroEnd ?? eventHeroNow, eventHeroPauses, eventHeroNow))
     : "0s";
   const eventHeroTotal = lead ? formatDuration(new Date(lead.createdAt), eventHeroNow) : "0s";
+  const eventTimingControlsEnabled = Boolean(lead && eventHeroStart && !eventHeroEnd && step === form.currentEvent);
 
   return (
     <div className="mx-auto max-w-5xl space-y-6">
@@ -783,6 +1241,17 @@ export function LeadForm({ lead }: LeadFormProps) {
               : `${lead.kytesId} · Continue the lead intake roadmap from the last saved event.`}
           </p>
         </div>
+        {step < REVIEW_EVENT_START && (
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={loadSampleLeadData}
+            disabled={submitting}
+          >
+            Load Sample (Events 1&ndash;3)
+          </Button>
+        )}
       </div>
 
       {/* Roadmap stepper — wraps to the next row instead of overlapping when it doesn't fit in one line */}
@@ -826,8 +1295,13 @@ export function LeadForm({ lead }: LeadFormProps) {
               {stepNumber !== eventLabels.length && (
                 <div className="relative mx-4 w-10 shrink-0 sm:w-16">
                   {segmentDurations[index] && (
-                    <span className="absolute left-1/2 top-[-1.25rem] -translate-x-1/2 whitespace-nowrap text-[10px] font-medium text-text-tertiary">
-                      {segmentDurations[index]}
+                    <span
+                      className={cn(
+                        "absolute left-1/2 top-[-1.25rem] -translate-x-1/2 whitespace-nowrap text-[10px] font-medium",
+                        index + 2 === step && activeEventPause ? "text-amber-600" : "text-text-tertiary"
+                      )}
+                    >
+                      {index + 2 === step && activeEventPause ? "Paused" : segmentDurations[index]}
                     </span>
                   )}
                   <div
@@ -849,9 +1323,14 @@ export function LeadForm({ lead }: LeadFormProps) {
           badge={eventHeroStatus}
           metrics={[
             { label: "Time in event", value: eventHeroTimeIn },
+            { label: "Paused time", value: formatDurationMs(eventPausedMs) },
             { label: "Total lead time", value: eventHeroTotal },
             { label: "Event", value: `${step} of ${eventLabels.length}` },
           ]}
+          timingPaused={Boolean(activeEventPause)}
+          pauseReason={activeEventPause?.reason}
+          onPause={eventTimingControlsEnabled ? (reason) => void setEventPaused(step, reason) : undefined}
+          onResume={eventTimingControlsEnabled ? () => void setEventPaused(step) : undefined}
         />
       )}
 
@@ -1164,7 +1643,7 @@ export function LeadForm({ lead }: LeadFormProps) {
               </div>
               <WorkflowRoadmap
                 proposal={linkedProposal}
-                onChange={setLinkedProposal}
+                onChange={handleLinkedProposalChange}
                 hideCreationPhase
                 visibleCycles={[REVIEW_EVENT_CYCLE[step] ?? "proposal"]}
               />
@@ -1249,38 +1728,6 @@ export function LeadForm({ lead }: LeadFormProps) {
                 </div>
 
                 <div className="space-y-2">
-                  <Label htmlFor="gtmName">GTM Name</Label>
-                  <Select
-                    id="gtmName"
-                    value={form.gtmName}
-                    onChange={(e) => setForm({ ...form, gtmName: e.target.value })}
-                  >
-                    <option value="">Select GTM owner...</option>
-                    {gtmOwners.map(({ name, team }) => (
-                      <option key={name} value={name}>
-                        {team ? `${name} (${team})` : name}
-                      </option>
-                    ))}
-                  </Select>
-                </div>
-
-                <div className="space-y-2">
-                  <Label htmlFor="vertical">VD Vertical</Label>
-                  <Select
-                    id="vertical"
-                    value={form.vertical}
-                    onChange={(e) => setForm({ ...form, vertical: e.target.value })}
-                  >
-                    <option value="">Select vertical...</option>
-                    {verticals.map((vertical) => (
-                      <option key={vertical} value={vertical}>
-                        {vertical}
-                      </option>
-                    ))}
-                  </Select>
-                </div>
-
-                <div className="space-y-2">
                   <Label htmlFor="leadType">
                     Lead Type <span className="text-red-500">*</span>
                   </Label>
@@ -1337,58 +1784,209 @@ export function LeadForm({ lead }: LeadFormProps) {
                 />
               </div>
 
-              <div className="grid gap-4 sm:grid-cols-3">
-                <div className="space-y-2">
-                  <Label htmlFor="sparcMentor">Sparc Mentor</Label>
-                  <Select
-                    id="sparcMentor"
-                    value={form.sparcMentor}
-                    onChange={(e) => setForm({ ...form, sparcMentor: e.target.value })}
-                  >
-                    <option value="">Select Sparc mentor...</option>
-                    {sparcMentors.map(({ name, team }) => (
-                      <option key={name} value={name}>
-                        {team ? `${name} (${team})` : name}
-                      </option>
-                    ))}
-                  </Select>
+              <div className="space-y-4 rounded-xl border border-border bg-surface-muted/30 p-4">
+                <div>
+                  <h3 className="text-sm font-semibold text-text-primary">SPARC details</h3>
+                  <p className="mt-0.5 text-xs text-text-tertiary">Assign the SPARC team responsible for this lead.</p>
                 </div>
+                <div className="grid gap-4 sm:grid-cols-3">
+                  <div className="space-y-2">
+                    <Label htmlFor="sparcOwner">SPARC Owner</Label>
+                    <Select
+                      id="sparcOwner"
+                      value={form.sparcOwner}
+                      onChange={(e) => setForm({ ...form, sparcOwner: e.target.value })}
+                    >
+                      <option value="">Select SPARC owner...</option>
+                      {sparcOwners.map(({ name, team }) => (
+                        <option key={name} value={name}>
+                          {team ? `${name} (${team})` : name}
+                        </option>
+                      ))}
+                    </Select>
+                  </div>
 
-                <div className="space-y-2">
-                  <Label htmlFor="proposalReviewer">Proposal Reviewer</Label>
-                  <Select
-                    id="proposalReviewer"
-                    value={form.proposalReviewer}
-                    onChange={(e) => setForm({ ...form, proposalReviewer: e.target.value })}
-                  >
-                    <option value="">Select reviewer...</option>
-                    {proposalReviewers.map(({ name, team }) => (
-                      <option key={name} value={name}>
-                        {team ? `${name} (${team})` : name}
-                      </option>
-                    ))}
-                  </Select>
+                  <div className="space-y-2">
+                    <Label htmlFor="proposalReviewer">SPARC Reviewer</Label>
+                    <Select
+                      id="proposalReviewer"
+                      value={form.proposalReviewer}
+                      onChange={(e) => setForm({ ...form, proposalReviewer: e.target.value })}
+                    >
+                      <option value="">Select SPARC reviewer...</option>
+                      {proposalReviewers.map(({ name, team }) => (
+                        <option key={name} value={name}>
+                          {team ? `${name} (${team})` : name}
+                        </option>
+                      ))}
+                    </Select>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="sparcMentor">SPARC Mentor</Label>
+                    <Select
+                      id="sparcMentor"
+                      value={form.sparcMentor}
+                      onChange={(e) => setForm({ ...form, sparcMentor: e.target.value })}
+                    >
+                      <option value="">Select SPARC mentor...</option>
+                      {sparcMentors.map(({ name, team }) => (
+                        <option key={name} value={name}>
+                          {team ? `${name} (${team})` : name}
+                        </option>
+                      ))}
+                    </Select>
+                  </div>
                 </div>
+              </div>
 
-                <div className="space-y-2">
-                  <Label htmlFor="proposalRegion">Proposal Region</Label>
-                  <Select
-                    id="proposalRegion"
-                    value={form.proposalRegion}
-                    onChange={(e) => setForm({ ...form, proposalRegion: e.target.value })}
-                  >
-                    <option value="">Select region...</option>
-                    {proposalRegions.map((region) => (
-                      <option key={region} value={region}>
-                        {region}
-                      </option>
-                    ))}
-                  </Select>
+              <div className="space-y-4 rounded-xl border border-border bg-surface-muted/30 p-4">
+                <div>
+                  <h3 className="text-sm font-semibold text-text-primary">GTM details</h3>
+                  <p className="mt-0.5 text-xs text-text-tertiary">Assign the GTM ownership and vertical for this lead.</p>
+                </div>
+                <div className="grid gap-4 sm:grid-cols-3">
+                  <div className="space-y-2">
+                    <Label htmlFor="gtmName">GTM Name</Label>
+                    <Select
+                      id="gtmName"
+                      value={form.gtmName}
+                      onChange={(e) => setForm({ ...form, gtmName: e.target.value })}
+                    >
+                      <option value="">Select GTM name...</option>
+                      {gtmOwners.map(({ name, team }) => (
+                        <option key={name} value={name}>
+                          {team ? `${name} (${team})` : name}
+                        </option>
+                      ))}
+                    </Select>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="vertical">VD Vertical</Label>
+                    <Select
+                      id="vertical"
+                      value={form.vertical}
+                      onChange={(e) => setForm({ ...form, vertical: e.target.value })}
+                    >
+                      <option value="">Select VD vertical...</option>
+                      {verticals.map((vertical) => (
+                        <option key={vertical} value={vertical}>
+                          {vertical}
+                        </option>
+                      ))}
+                    </Select>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="gtmHead">GTM Head</Label>
+                    <Select
+                      id="gtmHead"
+                      value={form.gtmHead}
+                      onChange={(e) => setForm({ ...form, gtmHead: e.target.value })}
+                    >
+                      <option value="">Select GTM head...</option>
+                      {gtmHeads.map(({ name, team }) => (
+                        <option key={name} value={name}>
+                          {team ? `${name} (${team})` : name}
+                        </option>
+                      ))}
+                    </Select>
+                  </div>
+                </div>
+              </div>
+
+              <div className="space-y-4 rounded-xl border border-border bg-surface-muted/30 p-4">
+                <div>
+                  <h3 className="text-sm font-semibold text-text-primary">Delivery details</h3>
+                  <p className="mt-0.5 text-xs text-text-tertiary">Assign the Delivery ownership and vertical for this lead.</p>
+                </div>
+                <div className="grid gap-4 sm:grid-cols-3">
+                  <div className="space-y-2">
+                    <Label htmlFor="deliveryName">Delivery Name</Label>
+                    <Select
+                      id="deliveryName"
+                      value={form.deliveryName}
+                      onChange={(e) => setForm({ ...form, deliveryName: e.target.value })}
+                    >
+                      <option value="">Select Delivery name...</option>
+                      {deliveryOwners.map(({ name, team }) => (
+                        <option key={name} value={name}>
+                          {team ? `${name} (${team})` : name}
+                        </option>
+                      ))}
+                    </Select>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="deliveryVertical">Delivery Vertical</Label>
+                    <Select
+                      id="deliveryVertical"
+                      value={form.vertical}
+                      onChange={(e) => setForm({ ...form, vertical: e.target.value })}
+                    >
+                      <option value="">Select Delivery vertical...</option>
+                      {verticals.map((vertical) => (
+                        <option key={vertical} value={vertical}>
+                          {vertical}
+                        </option>
+                      ))}
+                    </Select>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="deliveryHead">Delivery Head</Label>
+                    <Select
+                      id="deliveryHead"
+                      value={form.deliveryHead}
+                      onChange={(e) => setForm({ ...form, deliveryHead: e.target.value })}
+                    >
+                      <option value="">Select Delivery head...</option>
+                      {deliveryHeads.map(({ name, team }) => (
+                        <option key={name} value={name}>
+                          {team ? `${name} (${team})` : name}
+                        </option>
+                      ))}
+                    </Select>
+                  </div>
                 </div>
               </div>
 
               <div className="space-y-2">
-                <Label htmlFor="requirementSummary">Requirement Summary</Label>
+                <Label htmlFor="proposalRegion">Proposal Region</Label>
+                <Select
+                  id="proposalRegion"
+                  value={form.proposalRegion}
+                  onChange={(e) => setForm({ ...form, proposalRegion: e.target.value })}
+                >
+                  <option value="">Select region...</option>
+                  {proposalRegions.map((region) => (
+                    <option key={region} value={region}>
+                      {region}
+                    </option>
+                  ))}
+                </Select>
+              </div>
+
+              <div className="space-y-2">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <Label htmlFor="requirementSummary">Requirement Summary</Label>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={handleUpdateRequirementSummary}
+                    disabled={updatingSummary || allDocuments.every((doc) => !doc.extractedText?.trim())}
+                    title="Use AI to summarize the attached documents"
+                  >
+                    {updatingSummary ? (
+                      <Loader2 size={14} className="mr-1.5 animate-spin" />
+                    ) : (
+                      <Sparkles size={14} className="mr-1.5" />
+                    )}
+                    {updatingSummary ? "Updating..." : "Update using AI"}
+                  </Button>
+                </div>
                 <Textarea
                   id="requirementSummary"
                   value={form.requirementSummary}
@@ -1396,6 +1994,8 @@ export function LeadForm({ lead }: LeadFormProps) {
                   placeholder="Brief summary of the customer requirement..."
                   rows={4}
                 />
+                {summaryError && <p className="text-xs text-red-500">{summaryError}</p>}
+                <p className="text-xs text-text-tertiary">The AI uses readable text extracted from the attached documents and replaces the current summary.</p>
               </div>
 
               <div className="space-y-3">
@@ -1413,12 +2013,13 @@ export function LeadForm({ lead }: LeadFormProps) {
                   ))}
                 </div>
               </div>
+
             </>
           )}
 
           {step === 2 && (
             <>
-              <div className="grid gap-4 sm:grid-cols-2">
+              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
                 <div className="space-y-2">
                   <Label htmlFor="preQualified">
                     Pre-Qualification Outcome <span className="text-red-500">*</span>
@@ -1444,6 +2045,40 @@ export function LeadForm({ lead }: LeadFormProps) {
                     files={form.documents[preQualFormCategory]}
                     onChange={(files) => updateDoc(preQualFormCategory, files)}
                   />
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="drbApproved">DRB Approved</Label>
+                  <Select
+                    id="drbApproved"
+                    value={form.drbApproved}
+                    onChange={(e) =>
+                      setForm({
+                        ...form,
+                        drbApproved: e.target.value,
+                        drbApprovedDate: e.target.value === "yes" ? form.drbApprovedDate : "",
+                      })
+                    }
+                  >
+                    <option value="">Select status...</option>
+                    <option value="yes">Yes</option>
+                    <option value="no">No</option>
+                    <option value="na">NA</option>
+                  </Select>
+                  {form.drbApproved === "yes" && (
+                    <div className="space-y-2 pt-2">
+                    <Label htmlFor="drbApprovedDate">
+                      DRB Approval Date <span className="text-red-500">*</span>
+                    </Label>
+                    <Input
+                      id="drbApprovedDate"
+                      type="date"
+                      value={form.drbApprovedDate}
+                      onChange={(e) => setForm({ ...form, drbApprovedDate: e.target.value })}
+                      required
+                    />
+                    </div>
+                  )}
                 </div>
               </div>
 
@@ -1543,6 +2178,36 @@ export function LeadForm({ lead }: LeadFormProps) {
 
           {step === 4 && (
             <div className="space-y-6">
+              <div className="flex flex-col gap-3 rounded-xl border border-border bg-surface-muted/30 p-4 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <p className="text-sm font-semibold text-text-primary">AI Generated Proposal</p>
+                  <p className="text-xs text-text-secondary">
+                    Consolidates the customer expectations captured in Events 1&ndash;3 (initiation,
+                    pre-qualification, due diligence) and creates a proposal deck (PPT). The file
+                    downloads and is attached to this event.
+                  </p>
+                </div>
+                <Button
+                  type="button"
+                  onClick={handleGenerateProposalPpt}
+                  disabled={generatingPpt}
+                  className="shrink-0"
+                >
+                  {generatingPpt ? (
+                    <Loader2 size={16} className="mr-2 animate-spin" />
+                  ) : (
+                    <Sparkles size={16} className="mr-2" />
+                  )}
+                  {generatingPpt ? "Generating deck..." : "AI Generated Proposal"}
+                </Button>
+              </div>
+              {generatingPpt && (
+                <p className="text-xs text-text-tertiary">
+                  Building the presentation with the connected AI — this usually takes under a minute.
+                </p>
+              )}
+              {pptError && <p className="text-sm text-red-500">{pptError}</p>}
+
               <div className="grid gap-4 sm:grid-cols-2">
                 <div className="space-y-2">
                   <Label htmlFor="proposalStartDate">Proposal Start Date</Label>
@@ -1566,27 +2231,6 @@ export function LeadForm({ lead }: LeadFormProps) {
 
               <div className="grid gap-4 sm:grid-cols-2">
                 <div className="space-y-2">
-                  <Label htmlFor="proposalStatus">Proposal Status</Label>
-                  <Select
-                    id="proposalStatus"
-                    value={form.proposalStatus}
-                    onChange={(e) =>
-                      setForm({
-                        ...form,
-                        proposalStatus: e.target.value as ProposalStatus,
-                        proposalPauseReason: "",
-                      })
-                    }
-                  >
-                    {Object.entries(proposalStatusLabels).map(([value, label]) => (
-                      <option key={value} value={value}>
-                        {label}
-                      </option>
-                    ))}
-                  </Select>
-                </div>
-
-                <div className="space-y-2">
                   <Label htmlFor="proposalAttachment">Proposal Attachment</Label>
                   <FileUpload
                     category="lead_proposal"
@@ -1595,21 +2239,6 @@ export function LeadForm({ lead }: LeadFormProps) {
                   />
                 </div>
               </div>
-
-              {(form.proposalStatus === "paused" || form.proposalStatus === "blocked") && (
-                <div className="space-y-2">
-                  <Label htmlFor="proposalPauseReason">
-                    Pause / Block Reason <span className="text-red-500">*</span>
-                  </Label>
-                  <Textarea
-                    id="proposalPauseReason"
-                    value={form.proposalPauseReason}
-                    onChange={(e) => setForm({ ...form, proposalPauseReason: e.target.value })}
-                    placeholder="Why is the proposal paused or blocked?"
-                    rows={3}
-                  />
-                </div>
-              )}
             </div>
           )}
 
@@ -1633,11 +2262,19 @@ export function LeadForm({ lead }: LeadFormProps) {
             {submitting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save size={16} className="mr-2" />}
             Save
           </Button>
-          <Button type="button" onClick={handleNext} disabled={!canProceed || submitting}>
+          <Button type="button" onClick={handleNext} disabled={!canProceed || submitting || Boolean(activeEventPause)}>
             Next <ChevronRight size={16} className="ml-1" />
           </Button>
         </CardFooter>
       </Card>
+      )}
+
+      {step >= 1 && (
+        <EventActivityLog
+          eventNumber={step}
+          activityTitle={step === 1 ? "Lead Initiation" : undefined}
+          activityLog={activityOverrides[step] ?? ((lead?.eventData?.[`event${step}`] ?? {}) as { activityLog?: LeadEventActivity[] }).activityLog}
+        />
       )}
 
       {draftItem && (

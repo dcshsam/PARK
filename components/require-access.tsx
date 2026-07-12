@@ -14,7 +14,18 @@ import { ShieldAlert } from "lucide-react";
 export function RequireAccess({ action, children }: { action: Action; children: React.ReactNode }) {
   const { ready, can, currentProfile } = useProfile();
 
-  if (!ready) return null;
+  if (!ready) {
+    return (
+      <div className="space-y-6" aria-busy="true" aria-live="polite">
+        <div className="h-8 w-48 animate-pulse rounded-lg bg-surface-muted" />
+        <div className="grid gap-4 sm:grid-cols-2">
+          <div className="h-40 animate-pulse rounded-xl bg-surface-muted" />
+          <div className="h-40 animate-pulse rounded-xl bg-surface-muted" />
+        </div>
+        <div className="h-64 animate-pulse rounded-xl bg-surface-muted" />
+      </div>
+    );
+  }
 
   if (!can(action)) {
     return (

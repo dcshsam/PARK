@@ -177,12 +177,16 @@ export interface Lead {
   hgStatus: string;
   date?: Date;
   gtmName: string;
+  gtmHead?: string;
+  deliveryName?: string;
+  deliveryHead?: string;
   vertical: string;
   leadType: string;
   requirementSummary: string;
   /** Customer / client name — carried over to the linked proposal at Event 5. */
   clientName: string;
   /** Optional Proposal Basic Info fields captured early so Event 5 doesn't re-ask for them. */
+  sparcOwner?: string;
   sparcMentor?: string;
   proposalReviewer?: string;
   proposalRegion?: string;

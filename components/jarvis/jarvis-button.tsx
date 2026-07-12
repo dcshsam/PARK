@@ -6,7 +6,11 @@ import { Loader2, Mic, MicOff, Square, Volume2, AlertTriangle } from "lucide-rea
 import { cn } from "@/lib/utils";
 import { useJarvisContext } from "./jarvis-provider";
 
-export function JarvisButton() {
+export function JarvisButton({
+  placement = "floating",
+}: {
+  placement?: "floating" | "inline";
+}) {
   const { status, panelOpen, setPanelOpen, toggleListening, speechSupported, voiceSettings } =
     useJarvisContext();
 
@@ -52,7 +56,10 @@ export function JarvisButton() {
       aria-label={label}
       title={label}
       className={cn(
-        "fixed bottom-6 right-6 z-40 flex h-14 w-14 items-center justify-center rounded-full text-white shadow-lg transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2 active:scale-95",
+        "items-center justify-center text-white shadow-lg transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2 active:scale-95",
+        placement === "floating"
+          ? "fixed bottom-6 right-6 z-40 hidden h-14 w-14 rounded-full sm:flex"
+          : "relative flex h-9 w-9 rounded-lg shadow-none sm:hidden",
         status === "listening" && "jarvis-pulse bg-red-500 hover:bg-red-600",
         status === "confirming" && "bg-amber-500 hover:bg-amber-600",
         status === "speaking" && "bg-primary-600",

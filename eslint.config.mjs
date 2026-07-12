@@ -15,6 +15,7 @@ const eslintConfig = defineConfig([
     // Nested deploy build output and its dependencies
     "btp-deploy/.next/**",
     "btp-deploy/node_modules/**",
+    "btp-deploy/public/jarvis/**",
     // Vendored onnxruntime/VAD runtime assets served statically for Jarvis
     "public/jarvis/**",
   ]),

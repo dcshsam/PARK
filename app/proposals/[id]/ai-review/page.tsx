@@ -8,7 +8,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { getProposal, getDeepReview, saveDeepReview, getActiveDeepRules } from "@/lib/db";
-import { extractFinalProposalAndContext } from "@/lib/deep-review/extract";
+import { extractFinalProposalAndContext, getLatestDocsForCategory } from "@/lib/deep-review/extract";
 import { runDeepReview } from "@/lib/deep-review/engine";
 import { getDefaultStrictness } from "@/lib/deep-review/settings";
 import { useProfile } from "@/components/profile-provider";
@@ -316,7 +316,7 @@ export default function AiEnabledReviewPage() {
         return;
       }
 
-      const finalDoc = proposal.documents.find((d) => d.category === "final_proposal");
+      const finalDoc = getLatestDocsForCategory(proposal, "final_proposal")[0];
       const fileName = finalDoc?.name || `${proposal.title}.txt`;
       const rules = await getActiveDeepRules();
 
@@ -537,7 +537,7 @@ export default function AiEnabledReviewPage() {
             <div className="mb-5 p-3.5 bg-violet-50 border border-violet-200 rounded-lg">
               <p className="text-xs font-semibold text-violet-700 uppercase tracking-wide mb-1">Document under review</p>
               {(() => {
-                const finalDoc = proposal.documents.find((d) => d.category === "final_proposal");
+                const finalDoc = getLatestDocsForCategory(proposal, "final_proposal")[0];
                 if (finalDoc) {
                   return <p className="text-sm text-gray-800">{finalDoc.name}</p>;
                 }

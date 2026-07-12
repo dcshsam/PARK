@@ -33,9 +33,18 @@ function extractTextForDoc(doc: UploadedFile): string {
   return "[Binary content, no extracted text available]";
 }
 
-function getLatestDocsByCategory(docs: UploadedFile[]): Record<UploadedFile["category"], UploadedFile[]> {
+export function getLatestDocsByCategory(proposal: Proposal): Record<UploadedFile["category"], UploadedFile[]> {
+  const cycleRank = new Map(
+    proposal.workflowCycles.map((cycle) => [
+      cycle.id,
+      {
+        iteration: cycle.iteration ?? 1,
+        startedAt: new Date(cycle.startedAt).getTime(),
+      },
+    ])
+  );
   const grouped = new Map<UploadedFile["category"], UploadedFile[]>();
-  for (const doc of docs) {
+  for (const doc of proposal.documents) {
     const arr = grouped.get(doc.category) ?? [];
     arr.push(doc);
     grouped.set(doc.category, arr);
@@ -44,18 +53,36 @@ function getLatestDocsByCategory(docs: UploadedFile[]): Record<UploadedFile["cat
   const result = {} as Record<UploadedFile["category"], UploadedFile[]>;
   for (const [category, catDocs] of grouped.entries()) {
     const sorted = catDocs.sort((a, b) => {
+      const aCycle = a.cycleId ? cycleRank.get(a.cycleId) : undefined;
+      const bCycle = b.cycleId ? cycleRank.get(b.cycleId) : undefined;
+      const cycleDateDiff = (bCycle?.startedAt ?? 0) - (aCycle?.startedAt ?? 0);
+      if (cycleDateDiff !== 0) return cycleDateDiff;
+      const cycleIterationDiff = (bCycle?.iteration ?? 0) - (aCycle?.iteration ?? 0);
+      if (cycleIterationDiff !== 0) return cycleIterationDiff;
       const versionDiff = (b.version ?? 1) - (a.version ?? 1);
       if (versionDiff !== 0) return versionDiff;
       return new Date(b.uploadedAt).getTime() - new Date(a.uploadedAt).getTime();
     });
-    const highestVersion = sorted[0]?.version ?? 1;
-    result[category] = sorted.filter((d) => (d.version ?? 1) === highestVersion);
+    const latest = sorted[0];
+    if (!latest) continue;
+    const latestCycleId = latest.cycleId;
+    const latestVersion = latest.version ?? 1;
+    result[category] = sorted.filter(
+      (d) => d.cycleId === latestCycleId && (d.version ?? 1) === latestVersion
+    );
   }
   return result;
 }
 
+export function getLatestDocsForCategory(
+  proposal: Proposal,
+  category: UploadedFile["category"]
+): UploadedFile[] {
+  return getLatestDocsByCategory(proposal)[category] ?? [];
+}
+
 export function extractFinalProposalAndContext(proposal: Proposal): ExtractedDocumentTexts {
-  const latestByCategory = getLatestDocsByCategory(proposal.documents);
+  const latestByCategory = getLatestDocsByCategory(proposal);
   const finalProposalDocs = latestByCategory.final_proposal ?? [];
   const contextDocs = (["rfp", "transcript", "customer_doc"] as const).flatMap(
     (category) => latestByCategory[category] ?? []

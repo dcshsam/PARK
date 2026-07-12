@@ -661,7 +661,7 @@ export const JARVIS_TOOLS: ToolDefinition[] = [
       if (!proposal) return { ok: false, error: "Proposal not found" };
 
       // Same flow as app/proposals/[id]/ai-review — no duplicated engine logic.
-      const { extractFinalProposalAndContext } = await import("@/lib/deep-review/extract");
+      const { extractFinalProposalAndContext, getLatestDocsForCategory } = await import("@/lib/deep-review/extract");
       const { runDeepReview } = await import("@/lib/deep-review/engine");
       const { getDefaultStrictness } = await import("@/lib/deep-review/settings");
 
@@ -677,7 +677,7 @@ export const JARVIS_TOOLS: ToolDefinition[] = [
         };
       }
 
-      const finalDoc = proposal.documents.find((d) => d.category === "final_proposal");
+      const finalDoc = getLatestDocsForCategory(proposal, "final_proposal")[0];
       const rules = await getActiveDeepRules();
       const result = await runDeepReview({
         proposalId: proposal.id,
