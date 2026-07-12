@@ -1,9 +1,9 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { addLead, updateLead, getProposal } from "@/lib/db";
+import { addLead, updateLead, getProposal, addProposal } from "@/lib/db";
 import { applyWorkflowAction } from "@/lib/workflow-engine";
 import { getCycleType } from "@/lib/workflow-config";
 import { useProfile } from "@/components/profile-provider";
@@ -18,7 +18,6 @@ import { StageHeroCard } from "@/components/stage-hero-card";
 import { LEAD_EVENT_LABELS } from "@/lib/lead-events";
 import { FileUpload } from "@/components/file-upload";
 import { WorkflowRoadmap } from "@/components/workflow-roadmap";
-import { ProposalForm } from "@/components/proposal-form";
 import {
   getLeadStatuses,
   getLeadTypes,
@@ -573,6 +572,44 @@ export function LeadForm({ lead }: LeadFormProps) {
     setLinkedProposal(reviewReady);
     setForm((prev) => ({ ...prev, currentEvent: Math.max(prev.currentEvent, REVIEW_EVENT_START) }));
   };
+
+  // Event 5 asks for nothing new — every field the proposal needs already came
+  // from Events 1-4. Create it on entry and land straight on the review roadmap
+  // instead of re-showing a pre-filled form.
+  const autoCreating = useRef(false);
+  useEffect(() => {
+    if (step < REVIEW_EVENT_START || !lead || linkedProposal || loadingProposal) return;
+    if (autoCreating.current) return;
+    autoCreating.current = true;
+    setLoadingProposal(true);
+    (async () => {
+      try {
+        const created = await addProposal({
+          title: proposalInitialValues.title,
+          clientName: proposalInitialValues.clientName,
+          description: proposalInitialValues.description,
+          initiationDate: proposalInitialValues.initiationDate
+            ? new Date(proposalInitialValues.initiationDate)
+            : undefined,
+          dueDate: proposalInitialValues.dueDate ? new Date(proposalInitialValues.dueDate) : undefined,
+          technology: proposalInitialValues.technology || undefined,
+          projectType: proposalInitialValues.projectType || undefined,
+          sparcMentor: proposalInitialValues.sparcMentor || undefined,
+          gtmOwner: proposalInitialValues.gtmOwner || undefined,
+          proposalReviewer: proposalInitialValues.proposalReviewer || undefined,
+          proposalRegion: proposalInitialValues.proposalRegion || undefined,
+          status: "draft",
+          summary: "",
+          documents: proposalInitialDocuments,
+        });
+        await handleProposalCreated(created);
+      } finally {
+        setLoadingProposal(false);
+        autoCreating.current = false;
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [step, lead, linkedProposal, loadingProposal]);
 
   // Event 7 — Customer Pitch & Feedback: capture the pitch details and unlock
   // the retro event once saved.
@@ -1169,22 +1206,7 @@ export function LeadForm({ lead }: LeadFormProps) {
                 visibleCycles={[REVIEW_EVENT_CYCLE[step] ?? "proposal"]}
               />
             </>
-          ) : (
-            <>
-              <p className="text-sm text-text-secondary">
-                Basic Info, Supporting Docs, and the Final Proposal are already covered by Events 1-4 —
-                review the details below and create the proposal to hand this lead off for SPARC review.
-              </p>
-              <ProposalForm
-                initialValues={proposalInitialValues}
-                initialDocuments={proposalInitialDocuments}
-                onCreated={handleProposalCreated}
-                stepLabelPrefix="5."
-                steps={[4]}
-                submitLabel="Start Proposal Review"
-              />
-            </>
-          )}
+          ) : null}
         </div>
       ) : (
       <Card>

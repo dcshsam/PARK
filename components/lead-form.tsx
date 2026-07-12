@@ -1,9 +1,9 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { addLead, updateLead, getProposal } from "@/lib/db";
+import { addLead, updateLead, getProposal, addProposal } from "@/lib/db";
 import { applyWorkflowAction } from "@/lib/workflow-engine";
 import { getCycleType } from "@/lib/workflow-config";
 import { useProfile } from "@/components/profile-provider";
@@ -18,7 +18,6 @@ import { StageHeroCard } from "@/components/stage-hero-card";
 import { LEAD_EVENT_LABELS } from "@/lib/lead-events";
 import { FileUpload } from "@/components/file-upload";
 import { WorkflowRoadmap } from "@/components/workflow-roadmap";
-import { ProposalForm } from "@/components/proposal-form";
 import {
   getLeadStatuses,
   getLeadTypes,
@@ -52,13 +51,6 @@ import {
   buildSampleDueDiligenceItems,
 } from "@/lib/sample-lead";
 import { Loader2, Save, X, Check, ChevronLeft, ChevronRight, Plus, Pencil, Trash2, ExternalLink, Sparkles } from "lucide-react";
-
-function getEventTimestamp(lead: Lead | undefined, eventNumber: number): Date | undefined {
-  if (!lead?.eventData) return undefined;
-  const eventData = lead.eventData[`event${eventNumber}`] as Record<string, unknown> | undefined;
-  if (!eventData?.completedAt) return undefined;
-  return new Date(eventData.completedAt as string | number | Date);
-}
 
 function formatDuration(start: Date, end: Date): string {
   const diffMs = end.getTime() - start.getTime();
@@ -113,23 +105,6 @@ function totalPauseDurationMs(pauses: EventPausePeriod[], now: Date): number {
     const end = pause.endedAt ? new Date(pause.endedAt).getTime() : now.getTime();
     return total + Math.max(0, end - start);
   }, 0);
-}
-
-function getSegmentDurations(lead: Lead | undefined): (string | null)[] {
-  const labelsCount = eventLabels.length;
-  const durations: (string | null)[] = [];
-  for (let i = 0; i < labelsCount - 1; i++) {
-    const start = getEventTimestamp(lead, i + 1);
-    const end = getEventTimestamp(lead, i + 2);
-    if (start && end) {
-      durations.push(formatDurationMs(effectiveEventDurationMs(start, end, getEventPausePeriods(lead, i + 1), end)));
-    } else if (start && !end && lead?.currentEvent === i + 2) {
-      durations.push("In progress");
-    } else {
-      durations.push(null);
-    }
-  }
-  return durations;
 }
 
 const leadDocCategories = ["lead_mail", "lead_mom", "lead_discussion", "lead_customer_doc"] as const;
@@ -374,10 +349,28 @@ function consumeJarvisLeadDraft(): { leadName?: string; clientName?: string; req
   }
 }
 
-export function LeadForm({ lead }: LeadFormProps) {
+export function LeadForm({ lead: leadProp }: LeadFormProps) {
   const router = useRouter();
   const { currentProfile } = useProfile();
-  const isCreate = !lead;
+  const isCreate = !leadProp;
+
+  // The detail page fetches the lead once and never refetches, so the prop goes
+  // stale the moment we write. Every save here rebuilds the whole eventData map
+  // from `lead`, so reading the stale prop silently dropped events saved earlier
+  // in the session (and left completed events showing as "In progress"). Keep a
+  // live copy and feed it every write's result.
+  const [lead, setLead] = useState(leadProp);
+  const [syncedProp, setSyncedProp] = useState(leadProp);
+  if (leadProp && leadProp !== syncedProp) {
+    setSyncedProp(leadProp);
+    setLead(leadProp);
+  }
+
+  const persistLead = async (id: string, changes: Partial<Omit<Lead, "id" | "createdAt" | "updatedAt">>) => {
+    const updated = await updateLead(id, changes);
+    if (updated) setLead(updated);
+    return updated;
+  };
 
   const pausedEvent = getActivePausedEvent(lead);
   const initialStep = pausedEvent ?? lead?.currentEvent ?? 1;
@@ -404,7 +397,9 @@ export function LeadForm({ lead }: LeadFormProps) {
 
   useEffect(() => {
     if (!lead || !pausedEvent || lead.currentEvent === pausedEvent) return;
-    updateLead(lead.id, { currentEvent: pausedEvent });
+    // Persist-only correction: the form already resumes at `pausedEvent`, so
+    // there's no local state to sync back from this write.
+    void updateLead(lead.id, { currentEvent: pausedEvent });
   }, [lead, pausedEvent]);
 
   const pausePeriodsForEvent = (eventNumber: number): EventPausePeriod[] =>
@@ -444,7 +439,7 @@ export function LeadForm({ lead }: LeadFormProps) {
     ];
     setTimingOverrides((prev) => ({ ...prev, [eventNumber]: pausePeriods }));
     setActivityOverrides((prev) => ({ ...prev, [eventNumber]: activityLog }));
-    await updateLead(lead.id, {
+    await persistLead(lead.id, {
       eventData: {
         ...(lead.eventData ?? {}),
         [`event${eventNumber}`]: {
@@ -791,7 +786,7 @@ export function LeadForm({ lead }: LeadFormProps) {
 
     if (isCreate && step === 1) {
       const now = new Date();
-      return addLead({
+      const created = await addLead({
         ...buildEvent1Payload(),
         currentEvent: advance ? 2 : 1,
         eventData: {
@@ -807,6 +802,8 @@ export function LeadForm({ lead }: LeadFormProps) {
           },
         },
       });
+      setLead(created);
+      return created;
     }
 
     if (!lead) return undefined;
@@ -816,6 +813,12 @@ export function LeadForm({ lead }: LeadFormProps) {
     const nextEvent = advance && !eventPaused
       ? Math.min(eventLabels.length, Math.max(form.currentEvent, step + 1))
       : Math.max(form.currentEvent, step);
+    // Completion time for the event being saved. Re-saving (or re-advancing
+    // through) an already-completed event must keep its original timestamp —
+    // clearing it would erase this event's duration and make it read as
+    // "In progress" again.
+    const existingCompletedAt = eventTimestampForView(step);
+    const stepCompletedAt = eventPaused ? undefined : advance ? existingCompletedAt ?? now : existingCompletedAt;
     if (step === 1) {
       const event1Payload = buildEvent1Payload();
       const changes = event1ChangeLabels(lead, event1Payload);
@@ -831,35 +834,35 @@ export function LeadForm({ lead }: LeadFormProps) {
             },
           ]
         : event1Data.activityLog ?? [];
-      return updateLead(lead.id, {
+      return persistLead(lead.id, {
         ...event1Payload,
         currentEvent: nextEvent,
         eventData: {
           ...(lead.eventData ?? {}),
-          event1: { ...(lead.eventData?.event1 ?? {}), completedAt: advance && !eventPaused ? now : undefined, activityLog: activityOverrides[1] ?? activityLog, pausePeriods: pausePeriodsForEvent(1) },
+          event1: { ...(lead.eventData?.event1 ?? {}), completedAt: stepCompletedAt, activityLog: activityOverrides[1] ?? activityLog, pausePeriods: pausePeriodsForEvent(1) },
         },
       });
     }
     if (step === 2) {
-      const eventData = buildEvent2Payload(advance && !eventPaused ? now : undefined).eventData;
-      return updateLead(lead.id, {
+      const eventData = buildEvent2Payload(stepCompletedAt).eventData;
+      return persistLead(lead.id, {
         currentEvent: nextEvent,
         ...buildEvent1Payload(),
         eventData: mergeEventTiming(appendEventActivity(eventData, "event2", currentProfile?.name ?? "System", ["Pre-qualification outcome", "DRB approval", "DRB approval date", "Comments", "Attached documents"]), 2),
       });
     }
     if (step === 3) {
-      return updateLead(lead.id, {
+      return persistLead(lead.id, {
         currentEvent: nextEvent,
         ...buildEvent1Payload(),
         eventData: mergeEventTiming(appendEventActivity({
           ...(lead.eventData ?? {}),
-          event3: { items: form.dueDiligenceItems, completedAt: advance && !eventPaused ? now : undefined },
+          event3: { items: form.dueDiligenceItems, completedAt: stepCompletedAt },
         }, "event3", currentProfile?.name ?? "System", ["Due diligence entries"]), 3),
       });
     }
     if (step === 4) {
-      return updateLead(lead.id, {
+      return persistLead(lead.id, {
         currentEvent: nextEvent,
         ...buildEvent1Payload(),
         eventData: mergeEventTiming(appendEventActivity({
@@ -870,7 +873,7 @@ export function LeadForm({ lead }: LeadFormProps) {
             status: form.proposalStatus,
             pauseReason: form.proposalPauseReason.trim(),
             attachments: form.proposalAttachments,
-            completedAt: advance && !eventPaused ? now : undefined,
+            completedAt: stepCompletedAt,
           },
         }, "event4", currentProfile?.name ?? "System", ["Proposal dates", "Proposal status", "Pause / block reason", "Attached documents"]), 4),
       });
@@ -1040,7 +1043,7 @@ export function LeadForm({ lead }: LeadFormProps) {
     await applyWorkflowAction(created.id, { type: "start_proposal_creation" });
     const reviewReady = await applyWorkflowAction(created.id, { type: "submit_for_review" });
 
-    await updateLead(lead.id, {
+    await persistLead(lead.id, {
       proposalId: created.id,
       currentEvent: Math.max(form.currentEvent, REVIEW_EVENT_START),
       eventData: appendEventActivity(lead.eventData ?? {}, "event5", currentProfile?.name ?? "System", ["Proposal review started"]),
@@ -1049,13 +1052,52 @@ export function LeadForm({ lead }: LeadFormProps) {
     setForm((prev) => ({ ...prev, currentEvent: Math.max(prev.currentEvent, REVIEW_EVENT_START) }));
   };
 
+  // Event 5 asks for nothing new — every field the proposal needs already came
+  // from Events 1-4. Create it on entry and land straight on the review roadmap
+  // instead of re-showing a pre-filled form.
+  const autoCreating = useRef(false);
+  useEffect(() => {
+    if (step < REVIEW_EVENT_START || !lead || linkedProposal || loadingProposal) return;
+    if (autoCreating.current) return;
+    autoCreating.current = true;
+    setLoadingProposal(true);
+    (async () => {
+      try {
+        const created = await addProposal({
+          title: proposalInitialValues.title,
+          clientName: proposalInitialValues.clientName,
+          description: proposalInitialValues.description,
+          initiationDate: proposalInitialValues.initiationDate
+            ? new Date(proposalInitialValues.initiationDate)
+            : undefined,
+          dueDate: proposalInitialValues.dueDate ? new Date(proposalInitialValues.dueDate) : undefined,
+          technology: proposalInitialValues.technology || undefined,
+          projectType: proposalInitialValues.projectType || undefined,
+          sparcOwner: proposalInitialValues.sparcOwner || undefined,
+          sparcMentor: proposalInitialValues.sparcMentor || undefined,
+          gtmOwner: proposalInitialValues.gtmOwner || undefined,
+          proposalReviewer: proposalInitialValues.proposalReviewer || undefined,
+          proposalRegion: proposalInitialValues.proposalRegion || undefined,
+          status: "draft",
+          summary: "",
+          documents: proposalInitialDocuments,
+        });
+        await handleProposalCreated(created);
+      } finally {
+        setLoadingProposal(false);
+        autoCreating.current = false;
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [step, lead, linkedProposal, loadingProposal]);
+
   const handleLinkedProposalChange = async (proposal: Proposal) => {
     setLinkedProposal(proposal);
     if (!lead) return;
     const cycleType = proposal.workflowStage ? getCycleType(proposal.workflowStage) : null;
     const eventNumber = cycleType === "delivery" ? 6 : cycleType === "proposal" ? 5 : null;
     if (!eventNumber) return;
-    const updated = await updateLead(lead.id, {
+    const updated = await persistLead(lead.id, {
       eventData: appendEventActivity(lead.eventData ?? {}, `event${eventNumber}`, currentProfile?.name ?? "System", ["Proposal workflow changed"]),
     });
     if (updated) setForm((prev) => ({ ...prev, currentEvent: Math.max(prev.currentEvent, updated.currentEvent) }));
@@ -1068,7 +1110,7 @@ export function LeadForm({ lead }: LeadFormProps) {
     setSubmitting(true);
     try {
       const eventPaused = pausePeriodsForEvent(PITCH_EVENT).some((pause) => !pause.endedAt);
-      const updated = await updateLead(lead.id, {
+      const updated = await persistLead(lead.id, {
         currentEvent: eventPaused ? PITCH_EVENT : Math.max(form.currentEvent, RETRO_EVENT),
         eventData: mergeEventTiming(appendEventActivity({
           ...(lead.eventData ?? {}),
@@ -1104,7 +1146,7 @@ export function LeadForm({ lead }: LeadFormProps) {
     try {
       const eventPaused = pausePeriodsForEvent(RETRO_EVENT).some((pause) => !pause.endedAt);
       const outcome = retroOutcomeOptions.find((o) => o.value === form.retroOutcome);
-      const updated = await updateLead(lead.id, {
+      const updated = await persistLead(lead.id, {
         status: outcome?.leadStatus ?? lead.status,
         currentEvent: RETRO_EVENT,
         eventData: mergeEventTiming(appendEventActivity({
@@ -1142,10 +1184,43 @@ export function LeadForm({ lead }: LeadFormProps) {
         : cycleType === "delivery"
           ? REVIEW_EVENT_START + 1
           : REVIEW_EVENT_START;
-    if (target <= form.currentEvent) return;
-    updateLead(lead.id, { currentEvent: target }).then(() => {
+
+    // Events 5-6 are driven by the proposal workflow rather than a Next click,
+    // so they never stamp their own completedAt. Mirror it from the cycle each
+    // one tracks — without it their roadmap segments stay blank and the pitch
+    // event has no start time to measure from.
+    const stampedEvents = Object.entries(REVIEW_EVENT_CYCLE).flatMap(([key, reviewCycle]) => {
+      const eventNumber = Number(key);
+      if (eventTimestampForView(eventNumber)) return [];
+      const completedAt = linkedProposal.workflowCycles
+        .filter((c) => c.cycleType === reviewCycle && c.completedAt)
+        .sort((a, b) => b.completedAt!.getTime() - a.completedAt!.getTime())[0]?.completedAt;
+      return completedAt ? [[eventNumber, completedAt] as const] : [];
+    });
+
+    if (target <= form.currentEvent && stampedEvents.length === 0) return;
+
+    const eventData = stampedEvents.reduce<Record<string, unknown>>(
+      (acc, [eventNumber, completedAt]) => ({
+        ...acc,
+        [`event${eventNumber}`]: {
+          ...((acc[`event${eventNumber}`] ?? {}) as Record<string, unknown>),
+          completedAt,
+        },
+      }),
+      { ...(lead.eventData ?? {}) }
+    );
+
+    updateLead(lead.id, {
+      currentEvent: Math.max(target, form.currentEvent),
+      ...(stampedEvents.length > 0 ? { eventData } : {}),
+    }).then((updated) => {
+      if (!updated) return;
+      setLead(updated);
+      for (const [eventNumber] of stampedEvents) syncSavedEventData(updated, eventNumber);
       setForm((prev) => ({ ...prev, currentEvent: Math.max(prev.currentEvent, target) }));
     });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [lead, linkedProposal, form.currentEvent]);
 
   const togglePause = (id: string) => {
@@ -1220,7 +1295,29 @@ export function LeadForm({ lead }: LeadFormProps) {
     setForm((prev) => ({ ...prev, dueDiligenceItems: prev.dueDiligenceItems.filter((i) => i.id !== id) }));
   };
 
-  const segmentDurations = useMemo(() => getSegmentDurations(lead), [lead]);
+  // Connector labels for the roadmap stepper. Segment i sits between event i+1
+  // and event i+2, so it measures the time spent *in* event i+2 (from when its
+  // predecessor completed until it completed itself), minus that event's pauses.
+  // This reads live view state rather than the `lead` prop: the detail page
+  // fetches the lead once and never refetches, so a saved-but-stale prop kept
+  // showing an already-completed event as "In progress".
+  const segmentDurations = useMemo(
+    () =>
+      eventLabels.slice(0, -1).map((_, index) => {
+        const eventNumber = index + 2;
+        const start = eventTimestampForView(eventNumber - 1);
+        const end = eventTimestampForView(eventNumber);
+        if (start && end) {
+          return formatDurationMs(
+            effectiveEventDurationMs(start, end, pausePeriodsForEvent(eventNumber), end)
+          );
+        }
+        if (start && !end && form.currentEvent === eventNumber) return "In progress";
+        return null;
+      }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [lead, eventDataOverrides, timingOverrides, form.currentEvent]
+  );
 
   // Stage hero card data for the event currently being viewed. Events 5-7 show
   // the workflow roadmap's own card once a proposal is linked; before that (and
@@ -1275,10 +1372,10 @@ export function LeadForm({ lead }: LeadFormProps) {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold text-text-primary sm:text-3xl">
-            {isCreate ? "New Lead" : lead.leadName || lead.kytesId}
+            {!lead ? "New Lead" : lead.leadName || lead.kytesId}
           </h1>
           <p className="text-text-secondary">
-            {isCreate
+            {!lead
               ? "Start the SPARC lead intake roadmap."
               : `${lead.kytesId} · Continue the lead intake roadmap from the last saved event.`}
           </p>
@@ -1776,22 +1873,7 @@ export function LeadForm({ lead }: LeadFormProps) {
                 visibleCycles={[REVIEW_EVENT_CYCLE[step] ?? "proposal"]}
               />
             </>
-          ) : (
-            <>
-              <p className="text-sm text-text-secondary">
-                Basic Info, Supporting Docs, and the Final Proposal are already covered by Events 1-4 —
-                review the details below and create the proposal to hand this lead off for SPARC review.
-              </p>
-              <ProposalForm
-                initialValues={proposalInitialValues}
-                initialDocuments={proposalInitialDocuments}
-                onCreated={handleProposalCreated}
-                stepLabelPrefix="5."
-                steps={[4]}
-                submitLabel="Start Proposal Review"
-              />
-            </>
-          )}
+          ) : null}
         </div>
       ) : (
       <Card>

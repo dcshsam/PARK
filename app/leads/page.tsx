@@ -9,7 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { leadStatusLabels, type Lead, type LeadStatus } from "@/lib/types";
-import { formatDate } from "@/lib/utils";
+import { cn, formatDate } from "@/lib/utils";
 import { Plus, Trash2, FileText, Eye, Pencil, Database, Loader2 } from "lucide-react";
 
 const statusBadge: Record<LeadStatus, string> = {
@@ -20,6 +20,67 @@ const statusBadge: Record<LeadStatus, string> = {
   on_hold: "bg-status-warning-bg text-status-warning-text",
   dropped: "bg-status-danger-bg text-status-danger-text",
 };
+
+// The linear path a lead travels. on_hold / dropped sit off it (index -1).
+const LEAD_STAGES: LeadStatus[] = ["new", "qualified", "proposal", "converted"];
+
+function LeadStageTrack({ status }: { status: LeadStatus }) {
+  const current = LEAD_STAGES.indexOf(status);
+  const offTrack = current === -1;
+  // Dots sit at the centre of each equal-width column: 12.5% … 87.5%.
+  const trackInset = 50 / LEAD_STAGES.length;
+
+  return (
+    <div className="mt-3 border-t border-border-subtle pt-4">
+      <div className="relative flex items-start">
+        <div
+          className="absolute top-1.5 h-0.5 bg-border"
+          style={{ left: `${trackInset}%`, right: `${trackInset}%` }}
+        />
+        {!offTrack && current > 0 && (
+          <div
+            className="absolute top-1.5 h-0.5 bg-primary-600"
+            style={{
+              left: `${trackInset}%`,
+              width: `${(current / (LEAD_STAGES.length - 1)) * (100 - 2 * trackInset)}%`,
+            }}
+          />
+        )}
+        {LEAD_STAGES.map((stage, i) => {
+          const done = !offTrack && i < current;
+          const active = !offTrack && i === current;
+          return (
+            <div key={stage} className="relative z-10 flex flex-1 flex-col items-center gap-1.5">
+              <span
+                className={cn(
+                  "h-3 w-3 rounded-full border-2",
+                  done
+                    ? "border-primary-600 bg-primary-600"
+                    : active
+                      ? "border-primary-600 bg-surface ring-4 ring-primary-100"
+                      : "border-border bg-surface"
+                )}
+              />
+              <span
+                className={cn(
+                  "text-[11px] font-medium",
+                  active ? "text-primary-700" : done ? "text-text-secondary" : "text-text-muted"
+                )}
+              >
+                {leadStatusLabels[stage]}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+      {offTrack && (
+        <p className="mt-2 text-center text-[11px] font-medium text-text-tertiary">
+          {leadStatusLabels[status]} — progress paused
+        </p>
+      )}
+    </div>
+  );
+}
 
 export default function LeadsPage() {
   return (
@@ -192,12 +253,7 @@ function LeadsPageContent() {
                     <dd className="text-text-primary">{lead.date ? formatDate(lead.date) : "—"}</dd>
                   </div>
                 </dl>
-                {lead.requirementSummary && (
-                  <div className="mt-3 border-t border-border-subtle pt-3">
-                    <p className="text-xs font-medium uppercase text-text-tertiary">Requirement Summary</p>
-                    <p className="mt-1 line-clamp-2 text-sm text-text-secondary">{lead.requirementSummary}</p>
-                  </div>
-                )}
+                <LeadStageTrack status={lead.status} />
               </CardContent>
             </Card>
           ))}
