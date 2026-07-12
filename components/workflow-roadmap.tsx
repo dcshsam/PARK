@@ -38,7 +38,6 @@ import {
   Truck,
   Users,
   AlertCircle,
-  ThumbsUp,
   Send,
   RefreshCw,
   FilePlus2,
@@ -64,12 +63,11 @@ const CYCLE_ICON: Record<ReviewCycleType, React.ElementType> = {
   customer: Users,
 };
 
-// The actual happy-path per cycle is Review → Final Review → Completed.
+// The actual happy-path per cycle is Review → Completed.
 // Feedback/Rework is a side-loop surfaced separately, not a sequential step.
-type MilestoneKey = "review" | "final" | "completed";
+type MilestoneKey = "review" | "completed";
 const MILESTONES: { key: MilestoneKey; label: string; icon: React.ElementType }[] = [
   { key: "review", label: "Review", icon: FileText },
-  { key: "final", label: "Final Review", icon: ThumbsUp },
   { key: "completed", label: "Completed", icon: Check },
 ];
 
@@ -93,7 +91,6 @@ function getCycleProgress(
   // Scope progress to the selected cycle only. A proposal can have several
   // cycles of the same type (e.g. after an uploaded new version), so reading
   // global events would let an older completed cycle mask the active one.
-  const finalS = `${cycleType}_final_review` as WorkflowStage;
   const feedbackS = `${cycleType}_feedback` as WorkflowStage;
   const reworkS = `${cycleType}_rework` as WorkflowStage;
 
@@ -108,8 +105,7 @@ function getCycleProgress(
   const statusFor = (key: MilestoneKey): MilestoneStatus => {
     if (isCompleted) return "completed";
     if (!isCurrent) return "pending";
-    if (key === "review") return currentStage === finalS ? "completed" : "active";
-    if (key === "final") return currentStage === finalS ? "active" : "pending";
+    if (key === "review") return "active";
     return "pending";
   };
 
@@ -155,20 +151,18 @@ function getStageTheme(stage: WorkflowStage, cycleType: ReviewCycleType | null) 
   return cycleType ? cycleTheme[cycleType] : cycleTheme.proposal;
 }
 
-// Date each milestone (Review → Final Review → Completed) was reached within a cycle.
+// Date each milestone (Review → Completed) was reached within a cycle.
 function getMilestoneDates(
   cycleType: ReviewCycleType,
   cycle: WorkflowCycle | undefined,
   events: WorkflowEvent[]
 ): { review?: Date; final?: Date; completed?: Date } {
   if (!cycle) return {};
-  const finalS = `${cycleType}_final_review` as WorkflowStage;
   const completedS = `${cycleType}_completed` as WorkflowStage;
   const inCycle = (toStage: WorkflowStage) =>
     events.find((e) => e.cycleId === cycle.id && e.toStage === toStage)?.createdAt;
   return {
     review: cycle.startedAt,
-    final: inCycle(finalS),
     completed: cycle.completedAt ?? inCycle(completedS),
   };
 }
@@ -373,7 +367,7 @@ export function WorkflowRoadmap({
         <CardHeader>
           <CardTitle>Workflow Roadmap</CardTitle>
           <CardDescription>
-            Each cycle runs Review → Final Review → Completed. Requesting changes loops back through a rework iteration.
+            Each cycle runs linearly: Review → Completed → Next event. Approving advances the workflow.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-8">
@@ -477,10 +471,9 @@ export function WorkflowRoadmap({
             const inset = `${50 / MILESTONES.length}%`;
             const mDates = getMilestoneDates(cycleType, cycle, events);
             // Working days spent on each connector segment (Review→Final, Final→Completed).
-            const segReviewToFinal = prog.isCurrent || prog.isCompleted
-              ? workingDaysLabel(mDates.review, mDates.final)
+            const segReviewToCompleted = prog.isCurrent || prog.isCompleted
+              ? workingDaysLabel(mDates.review, mDates.completed)
               : null;
-            const segFinalToCompleted = workingDaysLabel(mDates.final, mDates.completed);
 
             return (
               <div key={cycleType} className="relative">
@@ -519,32 +512,22 @@ export function WorkflowRoadmap({
                   <div className="absolute top-6 h-0.5 bg-border" style={{ left: inset, right: inset }} />
 
                   {/* Working-day counts on each connector segment */}
-                  {segReviewToFinal && (
+                  {segReviewToCompleted && (
                     <span
                       className="absolute top-6 z-20 -translate-x-1/2 -translate-y-1/2 whitespace-nowrap rounded-full border border-border bg-surface px-2 py-0.5 text-[10px] font-medium text-text-tertiary"
-                      style={{ left: "33.333%" }}
+                      style={{ left: "50%" }}
                     >
-                      {segReviewToFinal}
-                    </span>
-                  )}
-                  {segFinalToCompleted && (
-                    <span
-                      className="absolute top-6 z-20 -translate-x-1/2 -translate-y-1/2 whitespace-nowrap rounded-full border border-border bg-surface px-2 py-0.5 text-[10px] font-medium text-text-tertiary"
-                      style={{ left: "66.666%" }}
-                    >
-                      {segFinalToCompleted}
+                      {segReviewToCompleted}
                     </span>
                   )}
 
-                  <div className="grid grid-cols-3 gap-4">
+                  <div className="grid grid-cols-2 gap-4">
                     {prog.milestones.map((m) => {
                       const Icon = m.icon;
                       const reachedAt =
                         m.key === "review"
                           ? mDates.review
-                          : m.key === "final"
-                            ? mDates.final
-                            : mDates.completed;
+                          : mDates.completed;
                       return (
                         <div key={m.key} className="relative flex flex-col items-center text-center">
                           <div

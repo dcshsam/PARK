@@ -230,6 +230,14 @@ interface DueDiligenceItem {
   attachments: Omit<UploadedFile, "id" | "proposalId" | "uploadedAt">[];
 }
 
+interface RetroMeeting {
+  id: string;
+  title: string;
+  date: string;
+  conductedBy: string;
+  summary: string;
+}
+
 type LeadFormProps = {
   lead?: Lead;
 };
@@ -500,6 +508,7 @@ export function LeadForm({ lead }: LeadFormProps) {
     wentWell?: string;
     improve?: string;
     learnings?: string;
+    meetings?: RetroMeeting[];
     completedAt?: Date;
     activityLog?: LeadEventActivity[];
   };
@@ -582,6 +591,11 @@ export function LeadForm({ lead }: LeadFormProps) {
     retroWentWell: event8Data.wentWell ?? "",
     retroImprove: event8Data.improve ?? "",
     retroLearnings: event8Data.learnings ?? "",
+    retroMeetings: event8Data.meetings ?? [],
+    retroMeetingTitle: "",
+    retroMeetingDate: "",
+    retroMeetingConductedBy: "",
+    retroMeetingSummary: "",
   });
 
   // Applied post-mount (not in the initializer) to avoid a hydration mismatch.
@@ -640,6 +654,29 @@ export function LeadForm({ lead }: LeadFormProps) {
 
   const updateDoc = (category: LeadDocumentCategory, files: Omit<UploadedFile, "id" | "proposalId" | "uploadedAt">[]) => {
     setForm((prev) => ({ ...prev, documents: { ...prev.documents, [category]: files } }));
+  };
+
+  const addRetroMeeting = () => {
+    if (!form.retroMeetingTitle.trim() || !form.retroMeetingDate) return;
+    const meeting: RetroMeeting = {
+      id: crypto.randomUUID(),
+      title: form.retroMeetingTitle.trim(),
+      date: form.retroMeetingDate,
+      conductedBy: form.retroMeetingConductedBy.trim(),
+      summary: form.retroMeetingSummary.trim(),
+    };
+    setForm((prev) => ({
+      ...prev,
+      retroMeetings: [...prev.retroMeetings, meeting],
+      retroMeetingTitle: "",
+      retroMeetingDate: "",
+      retroMeetingConductedBy: "",
+      retroMeetingSummary: "",
+    }));
+  };
+
+  const removeRetroMeeting = (id: string) => {
+    setForm((prev) => ({ ...prev, retroMeetings: prev.retroMeetings.filter((meeting) => meeting.id !== id) }));
   };
 
   const allDocuments = [
@@ -1074,14 +1111,16 @@ export function LeadForm({ lead }: LeadFormProps) {
           ...(lead.eventData ?? {}),
           event8: {
             outcome: form.retroOutcome,
+            meetings: form.retroMeetings,
             wentWell: form.retroWentWell.trim(),
             improve: form.retroImprove.trim(),
             learnings: form.retroLearnings.trim(),
             completedAt: eventPaused ? undefined : event8Data.completedAt ?? new Date(),
           },
-        }, "event8", currentProfile?.name ?? "System", ["Final outcome", "What went well", "What could be improved", "Key learnings"]), 8),
+        }, "event8", currentProfile?.name ?? "System", ["Final outcome", "Meeting events", "What went well", "What could be improved", "Key learnings"]), 8),
       });
       if (updated) {
+        syncSavedEventData(updated, RETRO_EVENT);
         setForm((prev) => ({ ...prev, status: updated.status, currentEvent: updated.currentEvent }));
       }
     } finally {
@@ -1225,7 +1264,10 @@ export function LeadForm({ lead }: LeadFormProps) {
   const eventHeroTimeIn = eventHeroStart
     ? formatDurationMs(effectiveEventDurationMs(eventHeroStart, eventHeroEnd ?? eventHeroNow, eventHeroPauses, eventHeroNow))
     : "0s";
-  const eventHeroTotal = lead ? formatDuration(new Date(lead.createdAt), eventHeroNow) : "0s";
+  const leadCompletedAt = eventTimestampForView(RETRO_EVENT);
+  const eventHeroTotal = lead
+    ? formatDuration(new Date(lead.createdAt), leadCompletedAt ?? eventHeroNow)
+    : "0s";
   const eventTimingControlsEnabled = Boolean(lead && eventHeroStart && !eventHeroEnd && step === form.currentEvent);
 
   return (
@@ -1355,6 +1397,92 @@ export function LeadForm({ lead }: LeadFormProps) {
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-6">
+              <div className="space-y-4 rounded-xl border border-border bg-surface-muted/30 p-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h3 className="text-sm font-semibold text-text-primary">Meeting events</h3>
+                    <p className="text-xs text-text-tertiary">Record meetings held during the final wrap-up, like Due Diligence entries.</p>
+                  </div>
+                  <Button type="button" size="sm" onClick={addRetroMeeting} disabled={!form.retroMeetingTitle.trim() || !form.retroMeetingDate}>
+                    <Plus size={16} className="mr-1" /> Add Meeting
+                  </Button>
+                </div>
+
+                <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="retroMeetingTitle">Meeting Title</Label>
+                    <Input
+                      id="retroMeetingTitle"
+                      value={form.retroMeetingTitle}
+                      onChange={(e) => setForm({ ...form, retroMeetingTitle: e.target.value })}
+                      placeholder="e.g. Final customer review"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="retroMeetingDate">Meeting Date</Label>
+                    <Input
+                      id="retroMeetingDate"
+                      type="date"
+                      value={form.retroMeetingDate}
+                      onChange={(e) => setForm({ ...form, retroMeetingDate: e.target.value })}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="retroMeetingConductedBy">Conducted By</Label>
+                    <Input
+                      id="retroMeetingConductedBy"
+                      value={form.retroMeetingConductedBy}
+                      onChange={(e) => setForm({ ...form, retroMeetingConductedBy: e.target.value })}
+                      placeholder="Team member"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="retroMeetingSummary">Meeting Summary</Label>
+                    <Input
+                      id="retroMeetingSummary"
+                      value={form.retroMeetingSummary}
+                      onChange={(e) => setForm({ ...form, retroMeetingSummary: e.target.value })}
+                      placeholder="Key discussion points"
+                    />
+                  </div>
+                </div>
+
+                {form.retroMeetings.length > 0 ? (
+                  <div className="overflow-hidden rounded-xl border border-border">
+                    <table className="w-full text-left text-sm">
+                      <thead className="bg-surface-muted text-text-secondary">
+                        <tr>
+                          <th className="px-4 py-3 font-medium">Meeting</th>
+                          <th className="px-4 py-3 font-medium">Date</th>
+                          <th className="px-4 py-3 font-medium">Conducted By</th>
+                          <th className="px-4 py-3 font-medium">Summary</th>
+                          <th className="px-4 py-3 text-right font-medium">Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-border">
+                        {form.retroMeetings.map((meeting) => (
+                          <tr key={meeting.id} className="bg-surface">
+                            <td className="px-4 py-3 font-medium text-text-primary">{meeting.title}</td>
+                            <td className="px-4 py-3 text-text-secondary">{meeting.date}</td>
+                            <td className="px-4 py-3 text-text-secondary">{meeting.conductedBy || "—"}</td>
+                            <td className="px-4 py-3 text-text-secondary">{meeting.summary || "—"}</td>
+                            <td className="px-4 py-3 text-right">
+                              <Button type="button" variant="ghost" size="sm" onClick={() => removeRetroMeeting(meeting.id)}>
+                                <Trash2 size={15} className="text-red-500" />
+                              </Button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                ) : (
+                  <p className="rounded-xl border border-dashed border-border px-4 py-3 text-xs text-text-tertiary">
+                    No meeting events added yet.
+                  </p>
+                )}
+              </div>
+
               <div className="grid gap-4 sm:grid-cols-2">
                 <div className="space-y-2">
                   <Label htmlFor="retroOutcome">

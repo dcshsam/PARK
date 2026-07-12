@@ -65,7 +65,8 @@ export default function ProposalDetailPage() {
             <p className="text-text-secondary">{proposal.clientName}</p>
           </div>
         </div>
-        <div className="flex flex-wrap items-center gap-3">
+        {/* Header actions intentionally removed. */}
+        <div className="hidden">
           {/* Status is derived from the workflow stage — change it via Roadmap actions. */}
           <Badge variant={proposal.status} className="px-3 py-1.5 text-sm">
             {statusLabels[proposal.status]}
