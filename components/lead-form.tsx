@@ -237,6 +237,8 @@ const event1ActivityLabels: Array<[keyof Lead, string]> = [
   ["gtmHead", "GTM head"],
   ["deliveryName", "Delivery name"],
   ["deliveryHead", "Delivery head"],
+  ["dlvCost", "DLV cost"],
+  ["dlvHeadCount", "DLV headcount"],
   ["sparcOwner", "SPARC owner"],
   ["vertical", "VD vertical"],
   ["leadType", "Lead type"],
@@ -519,6 +521,8 @@ export function LeadForm({ lead: leadProp }: LeadFormProps) {
     gtmHead: lead?.gtmHead ?? "",
     deliveryName: lead?.deliveryName ?? "",
     deliveryHead: lead?.deliveryHead ?? "",
+    dlvCost: lead?.dlvCost !== undefined ? String(lead.dlvCost) : "",
+    dlvHeadCount: lead?.dlvHeadCount !== undefined ? String(lead.dlvHeadCount) : "",
     sparcOwner: lead?.sparcOwner ?? "",
     vertical: lead?.vertical ?? "",
     leadType: lead?.leadType ?? "",
@@ -724,9 +728,7 @@ export function LeadForm({ lead: leadProp }: LeadFormProps) {
       );
     }
     if (step === 2) {
-      return form.preQualified.trim() !== "" &&
-        form.drbApproved.trim() !== "" &&
-        (form.drbApproved !== "yes" || form.drbApprovedDate.trim() !== "");
+      return form.preQualified.trim() !== "";
     }
     if (step === 3) {
       return true;
@@ -740,6 +742,38 @@ export function LeadForm({ lead: leadProp }: LeadFormProps) {
     return false;
   })();
 
+  const deliveryEstimateComplete =
+    form.dlvCost.trim() !== "" && form.dlvHeadCount.trim() !== "";
+  const deliveryEstimatePersisted =
+    lead?.dlvCost !== undefined && lead?.dlvHeadCount !== undefined;
+  const showDlvCost = lead?.dlvCost === undefined;
+  const showDlvHeadCount = lead?.dlvHeadCount === undefined;
+  const showDeliveryEstimateFields = showDlvCost || showDlvHeadCount;
+  const drbApprovalComplete =
+    form.drbApproved.trim() !== "" &&
+    (form.drbApproved !== "yes" || form.drbApprovedDate.trim() !== "");
+  const drbApprovalPersisted =
+    event2Data.drbApproved?.trim() !== "" &&
+    (event2Data.drbApproved !== "yes" || event2Data.drbApprovedDate?.trim() !== "");
+  const showDrbApproval = !event2Data.drbApproved?.trim();
+  const showDrbApprovalDate =
+    form.drbApproved === "yes" && !event2Data.drbApprovedDate?.trim();
+  const showDrbFields = showDrbApproval || showDrbApprovalDate;
+  const canAdvance =
+    canProceed &&
+    (step !== REVIEW_EVENT_START - 1 ||
+      (deliveryEstimateComplete && drbApprovalComplete));
+
+  const deliveryEstimateActivityChanges = () => [
+    ...(showDlvCost && form.dlvCost.trim() ? ["DLV cost (€)"] : []),
+    ...(showDlvHeadCount && form.dlvHeadCount.trim() ? ["DLV headcount"] : []),
+  ];
+
+  const drbApprovalActivityChanges = () => [
+    ...(showDrbApproval && form.drbApproved.trim() ? ["DRB approval"] : []),
+    ...(showDrbApprovalDate && form.drbApprovedDate.trim() ? ["DRB approval date"] : []),
+  ];
+
   const buildEvent1Payload = () => ({
     leadName: form.leadName.trim(),
     kytesId: form.kytesId.trim(),
@@ -750,6 +784,8 @@ export function LeadForm({ lead: leadProp }: LeadFormProps) {
     gtmHead: form.gtmHead || undefined,
     deliveryName: form.deliveryName || undefined,
     deliveryHead: form.deliveryHead || undefined,
+    dlvCost: form.dlvCost.trim() ? Number(form.dlvCost) : undefined,
+    dlvHeadCount: form.dlvHeadCount.trim() ? Number(form.dlvHeadCount) : undefined,
     sparcOwner: form.sparcOwner || undefined,
     vertical: form.vertical,
     leadType: form.leadType,
@@ -781,6 +817,19 @@ export function LeadForm({ lead: leadProp }: LeadFormProps) {
       },
     },
   });
+
+  const mergeCarriedDrbApproval = (eventData: Record<string, unknown>) => {
+    if (!form.drbApproved.trim()) return eventData;
+    const currentEvent2 = (eventData.event2 ?? {}) as Record<string, unknown>;
+    return {
+      ...eventData,
+      event2: {
+        ...currentEvent2,
+        drbApproved: form.drbApproved,
+        drbApprovedDate: form.drbApproved === "yes" ? form.drbApprovedDate : "",
+      },
+    };
+  };
 
   const saveCurrentStep = async (advance = false): Promise<Lead | undefined> => {
     if (!canProceed) return undefined;
@@ -849,24 +898,24 @@ export function LeadForm({ lead: leadProp }: LeadFormProps) {
       return persistLead(lead.id, {
         currentEvent: nextEvent,
         ...buildEvent1Payload(),
-        eventData: mergeEventTiming(appendEventActivity(eventData, "event2", currentProfile?.name ?? "System", ["Pre-qualification outcome", "DRB approval", "DRB approval date", "Comments", "Attached documents"]), 2),
+        eventData: mergeEventTiming(appendEventActivity(eventData, "event2", currentProfile?.name ?? "System", ["Pre-qualification outcome", "Comments", "Attached documents", ...deliveryEstimateActivityChanges(), ...drbApprovalActivityChanges()]), 2),
       });
     }
     if (step === 3) {
       return persistLead(lead.id, {
         currentEvent: nextEvent,
         ...buildEvent1Payload(),
-        eventData: mergeEventTiming(appendEventActivity({
+        eventData: mergeEventTiming(appendEventActivity(mergeCarriedDrbApproval({
           ...(lead.eventData ?? {}),
           event3: { items: form.dueDiligenceItems, completedAt: stepCompletedAt },
-        }, "event3", currentProfile?.name ?? "System", ["Due diligence entries"]), 3),
+        }), "event3", currentProfile?.name ?? "System", ["Due diligence entries", ...deliveryEstimateActivityChanges(), ...drbApprovalActivityChanges()]), 3),
       });
     }
     if (step === 4) {
       return persistLead(lead.id, {
         currentEvent: nextEvent,
         ...buildEvent1Payload(),
-        eventData: mergeEventTiming(appendEventActivity({
+        eventData: mergeEventTiming(appendEventActivity(mergeCarriedDrbApproval({
           ...(lead.eventData ?? {}),
           event4: {
             startDate: form.proposalStartDate,
@@ -876,7 +925,7 @@ export function LeadForm({ lead: leadProp }: LeadFormProps) {
             attachments: form.proposalAttachments,
             completedAt: stepCompletedAt,
           },
-        }, "event4", currentProfile?.name ?? "System", ["Proposal dates", "Proposal status", "Pause / block reason", "Attached documents"]), 4),
+        }), "event4", currentProfile?.name ?? "System", ["Proposal dates", "Proposal status", "Pause / block reason", "Attached documents", ...deliveryEstimateActivityChanges(), ...drbApprovalActivityChanges()]), 4),
       });
     }
     return undefined;
@@ -899,7 +948,7 @@ export function LeadForm({ lead: leadProp }: LeadFormProps) {
   };
 
   const handleNext = async () => {
-    if (!canProceed) return;
+    if (!canAdvance) return;
     setSubmitting(true);
     try {
       const result = await saveCurrentStep(true);
@@ -918,6 +967,13 @@ export function LeadForm({ lead: leadProp }: LeadFormProps) {
   };
 
   const handleStepClick = (targetStep: number) => {
+    if (
+      targetStep >= REVIEW_EVENT_START &&
+      (!deliveryEstimatePersisted || !drbApprovalPersisted)
+    ) {
+      setStep(REVIEW_EVENT_START - 1);
+      return;
+    }
     if (targetStep <= form.currentEvent) {
       setStep(targetStep);
     }
@@ -937,6 +993,8 @@ export function LeadForm({ lead: leadProp }: LeadFormProps) {
       hgStatus: sampleLeadBasics.hgStatus,
       vertical: sampleLeadBasics.vertical,
       leadType: sampleLeadBasics.leadType,
+      dlvCost: String(sampleLeadBasics.dlvCost),
+      dlvHeadCount: String(sampleLeadBasics.dlvHeadCount),
       date: sampleLeadBasics.date,
       requirementSummary: sampleLeadBasics.requirementSummary,
       documents: {
@@ -978,6 +1036,8 @@ export function LeadForm({ lead: leadProp }: LeadFormProps) {
         kytesId: form.kytesId,
         vertical: form.vertical,
         leadType: form.leadType,
+        dlvCost: form.dlvCost.trim() ? Number(form.dlvCost) : undefined,
+        dlvHeadCount: form.dlvHeadCount.trim() ? Number(form.dlvHeadCount) : undefined,
         gtmName: form.gtmName,
         requirementSummary: form.requirementSummary,
         documents: allDocuments.map((doc) => ({
@@ -1068,8 +1128,26 @@ export function LeadForm({ lead: leadProp }: LeadFormProps) {
   // from Events 1-4. Create it on entry and land straight on the review roadmap
   // instead of re-showing a pre-filled form.
   const autoCreating = useRef(false);
+
   useEffect(() => {
-    if (step < REVIEW_EVENT_START || !lead || linkedProposal || loadingProposal) return;
+    if (
+      step >= REVIEW_EVENT_START &&
+      lead &&
+      (!deliveryEstimatePersisted || !drbApprovalPersisted)
+    ) {
+      setStep(REVIEW_EVENT_START - 1);
+    }
+  }, [step, lead, deliveryEstimatePersisted, drbApprovalPersisted]);
+
+  useEffect(() => {
+    if (
+      step < REVIEW_EVENT_START ||
+      !lead ||
+      !deliveryEstimatePersisted ||
+      !drbApprovalPersisted ||
+      linkedProposal ||
+      loadingProposal
+    ) return;
     if (autoCreating.current) return;
     autoCreating.current = true;
     setLoadingProposal(true);
@@ -1101,7 +1179,7 @@ export function LeadForm({ lead: leadProp }: LeadFormProps) {
       }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [step, lead, linkedProposal, loadingProposal]);
+  }, [step, lead, deliveryEstimatePersisted, drbApprovalPersisted, linkedProposal, loadingProposal]);
 
   const handleLinkedProposalChange = async (proposal: Proposal) => {
     setLinkedProposal(proposal);
@@ -1393,6 +1471,123 @@ export function LeadForm({ lead: leadProp }: LeadFormProps) {
     ? formatDuration(new Date(lead.createdAt), leadCompletedAt ?? eventHeroNow)
     : "0s";
   const eventTimingControlsEnabled = Boolean(lead && eventHeroStart && !eventHeroEnd && step === form.currentEvent);
+
+  const renderDeliveryEstimateFields = () => (
+    <>
+      {showDlvCost && (
+        <div className="space-y-2">
+          <Label htmlFor="dlvCost">
+            DLV Cost (€){step === REVIEW_EVENT_START - 1 && <span className="text-red-500"> *</span>}
+          </Label>
+          <div className="relative">
+            <span className="pointer-events-none absolute inset-y-0 left-3 flex items-center text-sm font-semibold text-text-secondary">€</span>
+            <Input
+              id="dlvCost"
+              type="number"
+              inputMode="decimal"
+              min="0"
+              step="0.01"
+              value={form.dlvCost}
+              onChange={(e) => setForm({ ...form, dlvCost: e.target.value })}
+              placeholder="e.g. 185000"
+              className="pl-8"
+            />
+          </div>
+        </div>
+      )}
+
+      {showDlvHeadCount && (
+        <div className="space-y-2">
+          <Label htmlFor="dlvHeadCount">
+            DLV HeadCount{step === REVIEW_EVENT_START - 1 && <span className="text-red-500"> *</span>}
+          </Label>
+          <Input
+            id="dlvHeadCount"
+            type="number"
+            inputMode="numeric"
+            min="0"
+            step="1"
+            value={form.dlvHeadCount}
+            onChange={(e) => setForm({ ...form, dlvHeadCount: e.target.value })}
+            placeholder="e.g. 12"
+          />
+        </div>
+      )}
+    </>
+  );
+
+  const deliveryEstimateCarryForward = step > 1 && step < REVIEW_EVENT_START && showDeliveryEstimateFields ? (
+    <div className="space-y-4 rounded-xl border border-amber-300 bg-amber-50/70 p-4 dark:border-amber-700/70 dark:bg-amber-500/5 sm:p-5">
+      <div>
+        <h3 className="text-sm font-semibold text-text-primary">Delivery estimate required before Proposal Review</h3>
+        <p className="mt-0.5 text-xs text-text-secondary">
+          Complete the missing value{showDlvCost && showDlvHeadCount ? "s" : ""} when available. Any unfilled field carries forward to the next event.
+          {step === REVIEW_EVENT_START - 1 ? " Both fields are required to continue to Proposal Review." : ""}
+        </p>
+      </div>
+      <div className="grid gap-4 sm:grid-cols-2">
+        {renderDeliveryEstimateFields()}
+      </div>
+    </div>
+  ) : null;
+
+  const renderDrbApprovalFields = () => (
+    <>
+      {showDrbApproval && (
+        <div className="space-y-2">
+          <Label htmlFor="drbApproved">
+            DRB Approved{step === REVIEW_EVENT_START - 1 && <span className="text-red-500"> *</span>}
+          </Label>
+          <Select
+            id="drbApproved"
+            value={form.drbApproved}
+            onChange={(e) =>
+              setForm({
+                ...form,
+                drbApproved: e.target.value,
+                drbApprovedDate: e.target.value === "yes" ? form.drbApprovedDate : "",
+              })
+            }
+          >
+            <option value="">Select status...</option>
+            <option value="yes">Yes</option>
+            <option value="no">No</option>
+            <option value="na">NA</option>
+          </Select>
+        </div>
+      )}
+
+      {showDrbApprovalDate && (
+        <div className="space-y-2">
+          <Label htmlFor="drbApprovedDate">
+            DRB Approval Date{step === REVIEW_EVENT_START - 1 && <span className="text-red-500"> *</span>}
+          </Label>
+          <Input
+            id="drbApprovedDate"
+            type="date"
+            value={form.drbApprovedDate}
+            onChange={(e) => setForm({ ...form, drbApprovedDate: e.target.value })}
+            required={step === REVIEW_EVENT_START - 1}
+          />
+        </div>
+      )}
+    </>
+  );
+
+  const drbApprovalCarryForward = step > 2 && step < REVIEW_EVENT_START && showDrbFields ? (
+    <div className="space-y-4 rounded-xl border border-amber-300 bg-amber-50/70 p-4 dark:border-amber-700/70 dark:bg-amber-500/5 sm:p-5">
+      <div>
+        <h3 className="text-sm font-semibold text-text-primary">DRB approval required before Proposal Review</h3>
+        <p className="mt-0.5 text-xs text-text-secondary">
+          Select the DRB approval when available. If approved, the approval date is also required.
+          {step === REVIEW_EVENT_START - 1 ? " Complete the remaining DRB information to continue to Proposal Review." : " Any missing information carries forward to the next event."}
+        </p>
+      </div>
+      <div className="grid gap-4 sm:grid-cols-2">
+        {renderDrbApprovalFields()}
+      </div>
+    </div>
+  ) : null;
 
   return (
     <div className="mx-auto max-w-5xl space-y-6">
@@ -1920,6 +2115,68 @@ export function LeadForm({ lead: leadProp }: LeadFormProps) {
         <CardContent className="space-y-6">
           {step === 1 && (
             <>
+              <div className="space-y-4 rounded-xl border border-primary-200 bg-primary-50/40 p-4 dark:border-primary-700/60 dark:bg-primary-500/5 sm:p-5">
+                <div>
+                  <h3 className="text-sm font-semibold text-text-primary">Proposal Details</h3>
+                  <p className="mt-0.5 text-xs text-text-tertiary">Capture the customer, proposal classification, region, and initial delivery estimate.</p>
+                </div>
+                <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                  <div className="space-y-2">
+                    <Label htmlFor="leadName">
+                      Lead Name <span className="text-red-500">*</span>
+                    </Label>
+                    <Input
+                      id="leadName"
+                      value={form.leadName}
+                      onChange={(e) => setForm({ ...form, leadName: e.target.value })}
+                      placeholder="e.g. Acme Corp — CRM Modernization"
+                    />
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="clientName">
+                      Customer Name <span className="text-red-500">*</span>
+                    </Label>
+                    <Input
+                      id="clientName"
+                      value={form.clientName}
+                      onChange={(e) => setForm({ ...form, clientName: e.target.value })}
+                      placeholder="e.g. Acme Corporation"
+                    />
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="proposalRegion">Region</Label>
+                    <Select
+                      id="proposalRegion"
+                      value={form.proposalRegion}
+                      onChange={(e) => setForm({ ...form, proposalRegion: e.target.value })}
+                    >
+                      <option value="">Select region...</option>
+                      {proposalRegions.map((region) => (
+                        <option key={region} value={region}>{region}</option>
+                      ))}
+                    </Select>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="leadType">
+                      Proposal Type (Lead Type) <span className="text-red-500">*</span>
+                    </Label>
+                    <Select
+                      id="leadType"
+                      value={form.leadType}
+                      onChange={(e) => setForm({ ...form, leadType: e.target.value })}
+                    >
+                      <option value="">Select type...</option>
+                      {types.map((type) => <option key={type} value={type}>{type}</option>)}
+                    </Select>
+                  </div>
+
+                  {renderDeliveryEstimateFields()}
+                </div>
+              </div>
+
               <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
                 <div className="space-y-2">
                   <Label htmlFor="receivedVia">
@@ -1965,49 +2222,6 @@ export function LeadForm({ lead: leadProp }: LeadFormProps) {
                   />
                 </div>
 
-                <div className="space-y-2">
-                  <Label htmlFor="leadType">
-                    Lead Type <span className="text-red-500">*</span>
-                  </Label>
-                  <Select
-                    id="leadType"
-                    value={form.leadType}
-                    onChange={(e) => setForm({ ...form, leadType: e.target.value })}
-                  >
-                    <option value="">Select type...</option>
-                    {types.map((type) => (
-                      <option key={type} value={type}>
-                        {type}
-                      </option>
-                    ))}
-                  </Select>
-                </div>
-              </div>
-
-              <div className="grid gap-4 sm:grid-cols-2">
-                <div className="space-y-2">
-                  <Label htmlFor="leadName">
-                    Lead Name <span className="text-red-500">*</span>
-                  </Label>
-                  <Input
-                    id="leadName"
-                    value={form.leadName}
-                    onChange={(e) => setForm({ ...form, leadName: e.target.value })}
-                    placeholder="e.g. Acme Corp — CRM Modernization"
-                  />
-                </div>
-
-                <div className="space-y-2">
-                  <Label htmlFor="clientName">
-                    Customer / Client Name <span className="text-red-500">*</span>
-                  </Label>
-                  <Input
-                    id="clientName"
-                    value={form.clientName}
-                    onChange={(e) => setForm({ ...form, clientName: e.target.value })}
-                    placeholder="e.g. Acme Corporation"
-                  />
-                </div>
               </div>
 
               <div className="space-y-2">
@@ -2191,22 +2405,6 @@ export function LeadForm({ lead: leadProp }: LeadFormProps) {
               </div>
 
               <div className="space-y-2">
-                <Label htmlFor="proposalRegion">Proposal Region</Label>
-                <Select
-                  id="proposalRegion"
-                  value={form.proposalRegion}
-                  onChange={(e) => setForm({ ...form, proposalRegion: e.target.value })}
-                >
-                  <option value="">Select region...</option>
-                  {proposalRegions.map((region) => (
-                    <option key={region} value={region}>
-                      {region}
-                    </option>
-                  ))}
-                </Select>
-              </div>
-
-              <div className="space-y-2">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <Label htmlFor="requirementSummary">Requirement Summary</Label>
                   <Button
@@ -2257,6 +2455,7 @@ export function LeadForm({ lead: leadProp }: LeadFormProps) {
 
           {step === 2 && (
             <>
+              {deliveryEstimateCarryForward}
               <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
                 <div className="space-y-2">
                   <Label htmlFor="preQualified">
@@ -2285,39 +2484,7 @@ export function LeadForm({ lead: leadProp }: LeadFormProps) {
                   />
                 </div>
 
-                <div className="space-y-2">
-                  <Label htmlFor="drbApproved">DRB Approved</Label>
-                  <Select
-                    id="drbApproved"
-                    value={form.drbApproved}
-                    onChange={(e) =>
-                      setForm({
-                        ...form,
-                        drbApproved: e.target.value,
-                        drbApprovedDate: e.target.value === "yes" ? form.drbApprovedDate : "",
-                      })
-                    }
-                  >
-                    <option value="">Select status...</option>
-                    <option value="yes">Yes</option>
-                    <option value="no">No</option>
-                    <option value="na">NA</option>
-                  </Select>
-                  {form.drbApproved === "yes" && (
-                    <div className="space-y-2 pt-2">
-                    <Label htmlFor="drbApprovedDate">
-                      DRB Approval Date <span className="text-red-500">*</span>
-                    </Label>
-                    <Input
-                      id="drbApprovedDate"
-                      type="date"
-                      value={form.drbApprovedDate}
-                      onChange={(e) => setForm({ ...form, drbApprovedDate: e.target.value })}
-                      required
-                    />
-                    </div>
-                  )}
-                </div>
+                {renderDrbApprovalFields()}
               </div>
 
               <div className="space-y-2">
@@ -2335,6 +2502,8 @@ export function LeadForm({ lead: leadProp }: LeadFormProps) {
 
           {step === 3 && (
             <div className="space-y-4">
+              {deliveryEstimateCarryForward}
+              {drbApprovalCarryForward}
               <div className="flex items-center justify-between">
                 <p className="text-sm text-text-secondary">
                   Add meetings and analysis performed during due diligence.
@@ -2416,6 +2585,8 @@ export function LeadForm({ lead: leadProp }: LeadFormProps) {
 
           {step === 4 && (
             <div className="space-y-6">
+              {deliveryEstimateCarryForward}
+              {drbApprovalCarryForward}
               <div className="flex flex-col gap-3 rounded-xl border border-border bg-surface-muted/30 p-4 sm:flex-row sm:items-center sm:justify-between">
                 <div>
                   <p className="text-sm font-semibold text-text-primary">AI Generated Proposal</p>
@@ -2505,7 +2676,7 @@ export function LeadForm({ lead: leadProp }: LeadFormProps) {
             {submitting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save size={16} className="mr-2" />}
             Save
           </Button>
-          <Button type="button" onClick={handleNext} disabled={!canProceed || submitting || Boolean(activeEventPause)}>
+          <Button type="button" onClick={handleNext} disabled={!canAdvance || submitting || Boolean(activeEventPause)}>
             Next <ChevronRight size={16} className="ml-1" />
           </Button>
         </CardFooter>

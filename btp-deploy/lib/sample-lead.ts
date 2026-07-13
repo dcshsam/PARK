@@ -21,6 +21,8 @@ export const sampleLeadBasics = {
   hgStatus: "Hot",
   vertical: "SAP",
   leadType: "Proposal",
+  dlvCost: 185000,
+  dlvHeadCount: 12,
   date: isoDaysAgo(14),
   requirementSummary:
     "Acme Corporation wants to replace its 10-year-old on-premise CRM with a cloud-native SAP Sales Cloud solution. Key expectations: 25% sales productivity improvement within 12 months, a 360-degree customer view across sales/service/marketing, real-time leadership dashboards, automated quote workflows, and a 6-month implementation completed before their next fiscal year. Compliance requirements include GDPR and SOC 2.",

@@ -21,6 +21,7 @@ import {
   Check,
   Users,
   List,
+  PanelsTopLeft,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useEffect, useRef, useState } from "react";
@@ -37,9 +38,10 @@ import { JarvisPanel } from "@/components/jarvis/jarvis-panel";
 const navItems: { href: string; label: string; icon: React.ElementType; action?: Action }[] = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { href: "/leads", label: "Proposal Master", icon: List },
-  { href: "/proposals", label: "Proposals", icon: FileText },
+  { href: "/proposals", label: "Proposal Review", icon: FileText },
   { href: "/analytics", label: "Analytics", icon: BarChart3 },
   { href: "/team-activity", label: "Team Activity", icon: Users },
+  { href: "/project-cards", label: "Proposal Cards", icon: PanelsTopLeft },
   { href: "/rules", label: "Rules", icon: SlidersHorizontal, action: "manage_rules" },
   { href: "/profiles", label: "Profiles", icon: ShieldCheck, action: "manage_profiles" },
   { href: "/settings", label: "Settings", icon: Settings, action: "manage_settings" },

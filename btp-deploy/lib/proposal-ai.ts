@@ -31,6 +31,8 @@ export interface ProposalBriefInput {
   kytesId?: string;
   vertical?: string;
   leadType?: string;
+  dlvCost?: number;
+  dlvHeadCount?: number;
   gtmName?: string;
   requirementSummary?: string;
   documents: BriefDocument[];
@@ -55,6 +57,8 @@ export function buildProposalBrief(input: ProposalBriefInput): string {
   if (input.kytesId) lines.push(`Kytes ID: ${input.kytesId}`);
   if (input.vertical) lines.push(`Vertical: ${input.vertical}`);
   if (input.leadType) lines.push(`Lead Type: ${input.leadType}`);
+  if (input.dlvCost !== undefined) lines.push(`DLV Cost: €${input.dlvCost}`);
+  if (input.dlvHeadCount !== undefined) lines.push(`DLV Headcount: ${input.dlvHeadCount}`);
   if (input.gtmName) lines.push(`GTM Owner: ${input.gtmName}`);
   if (input.requirementSummary) {
     lines.push("", "## Requirement Summary", input.requirementSummary);

@@ -188,6 +188,9 @@ export interface Lead {
   gtmHead?: string;
   deliveryName?: string;
   deliveryHead?: string;
+  /** Delivery estimate captured with the Event 1 proposal details. */
+  dlvCost?: number;
+  dlvHeadCount?: number;
   vertical: string;
   leadType: string;
   requirementSummary: string;
