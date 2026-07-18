@@ -249,8 +249,11 @@ export function AiReviewPanel({ proposalId, embedded = false }: { proposalId: st
   const [error, setError] = useState("");
   const [strictness, setStrictness] = useState<Strictness>("medium");
   const [downloading, setDownloading] = useState(false);
+  const [importingExcel, setImportingExcel] = useState(false);
+  const [previousReportExpanded, setPreviousReportExpanded] = useState(false);
   const [progress, setProgress] = useState(0);
   const [stage, setStage] = useState("");
+  const excelInputRef = useRef<HTMLInputElement>(null);
   const progressFloorRef = useRef(0);
   const progressTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -270,6 +273,7 @@ export function AiReviewPanel({ proposalId, embedded = false }: { proposalId: st
       if (saved) {
         setReview(saved);
         setSavedReview(true);
+        setPreviousReportExpanded(false);
         setStrictness(saved.strictness);
         setActiveTab("overview");
       } else {
@@ -347,6 +351,7 @@ export function AiReviewPanel({ proposalId, embedded = false }: { proposalId: st
       setStage("Review complete");
       setReview(result);
       setSavedReview(true);
+      setPreviousReportExpanded(false);
       setActiveTab("overview");
     } catch (e) {
       stopTimer();
@@ -359,6 +364,7 @@ export function AiReviewPanel({ proposalId, embedded = false }: { proposalId: st
   const handleRerun = () => {
     setReview(null);
     setSavedReview(false);
+    setPreviousReportExpanded(false);
     setError("");
   };
 
@@ -376,6 +382,38 @@ export function AiReviewPanel({ proposalId, embedded = false }: { proposalId: st
     }
   };
 
+  const handleDownloadExcelTemplate = async () => {
+    setError("");
+    try {
+      const { downloadReviewExcelTemplate } = await import("@/lib/deep-review/excel");
+      await downloadReviewExcelTemplate();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not create the Excel review template");
+    }
+  };
+
+  const handleExcelUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file || !proposal || importingExcel) return;
+    setImportingExcel(true);
+    setError("");
+    try {
+      const { importReviewFromExcel } = await import("@/lib/deep-review/excel");
+      const imported = await importReviewFromExcel(file, proposal.id, strictness);
+      await saveDeepReview(imported);
+      window.dispatchEvent(new Event("deep-review-saved"));
+      setReview(imported);
+      setSavedReview(true);
+      setStrictness(imported.strictness);
+      setActiveTab("overview");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not import the Excel review");
+    } finally {
+      setImportingExcel(false);
+    }
+  };
+
   if (loading) return <p className="text-text-secondary">Loading AI review workspace…</p>;
   if (!proposal) return <p className="text-text-secondary">Proposal not found.</p>;
 
@@ -383,6 +421,20 @@ export function AiReviewPanel({ proposalId, embedded = false }: { proposalId: st
   const warningItems = review ? review.all_errors.filter((e) => e.severity === "warning") : [];
   const coverage = review?.requirement_coverage ?? null;
   const numerical = review?.numerical_check ?? null;
+  const latestFinalDocument = getLatestDocsForCategory(proposal, "final_proposal")[0];
+  const latestChangesSubmittedAt = proposal.workflowEvents
+    .filter((event) => event.type === "changes_submitted")
+    .reduce<Date | null>(
+      (latest, event) => (!latest || event.createdAt > latest ? event.createdAt : latest),
+      null
+    );
+  const latestVersionAt = [latestFinalDocument?.uploadedAt, latestChangesSubmittedAt]
+    .filter((date): date is Date => Boolean(date))
+    .reduce<Date | null>((latest, date) => (!latest || date > latest ? date : latest), null);
+  const reviewIsStale = Boolean(
+    review && latestVersionAt && new Date(review.analyzed_at).getTime() < latestVersionAt.getTime()
+  );
+  const showReviewResults = Boolean(review) && (!reviewIsStale || previousReportExpanded);
   const tabs: { key: ResultTab; label: string; count?: number }[] = review
     ? [
         { key: "overview", label: "Overview" },
@@ -406,6 +458,14 @@ export function AiReviewPanel({ proposalId, embedded = false }: { proposalId: st
           : "min-h-screen bg-gray-50 -m-4 lg:-m-8 text-gray-900"
       }
     >
+      <input
+        ref={excelInputRef}
+        type="file"
+        accept=".xlsx,.xls,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel"
+        onChange={handleExcelUpload}
+        className="hidden"
+        aria-label="Upload review Excel file"
+      />
       {/* Header */}
       <div className="bg-white shadow-sm">
         <div className="max-w-6xl mx-auto py-5 px-4 sm:px-6 lg:px-8 flex items-center justify-between">
@@ -423,8 +483,25 @@ export function AiReviewPanel({ proposalId, embedded = false }: { proposalId: st
               <p className="text-xs text-gray-400 mt-0.5">Deep checklist · Error detection · Improvement suggestions</p>
             </div>
           </div>
-          {review && (
-            <div className="flex items-center gap-2">
+          {review && !reviewIsStale && (
+            <div className="flex flex-wrap items-center justify-end gap-2">
+              {canRun && (
+                <>
+                  <button
+                    onClick={handleDownloadExcelTemplate}
+                    className="px-3 py-2 bg-white border border-gray-300 text-gray-700 rounded-lg text-sm font-medium hover:bg-gray-50"
+                  >
+                    Excel Template
+                  </button>
+                  <button
+                    onClick={() => excelInputRef.current?.click()}
+                    disabled={importingExcel}
+                    className="px-3 py-2 bg-white border border-emerald-300 text-emerald-700 rounded-lg text-sm font-medium hover:bg-emerald-50 disabled:opacity-50"
+                  >
+                    {importingExcel ? "Importing…" : "Upload Excel Review"}
+                  </button>
+                </>
+              )}
               {canRun && (
                 <button
                   onClick={handleRerun}
@@ -493,7 +570,7 @@ export function AiReviewPanel({ proposalId, embedded = false }: { proposalId: st
       </div>
 
       {/* Tab bar */}
-      {review && (
+      {review && showReviewResults && (
         <div className="bg-white border-b border-gray-200 sticky top-0 z-10">
           <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 flex gap-1 overflow-x-auto">
             {tabs.map((tab) => (
@@ -527,19 +604,98 @@ export function AiReviewPanel({ proposalId, embedded = false }: { proposalId: st
           <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">{error}</div>
         )}
 
-        {savedReview && review && (
+        {savedReview && review && !reviewIsStale && (
           <div className="mb-4 flex items-center gap-2 p-3 bg-violet-50 border border-violet-200 rounded-lg text-sm text-violet-700">
             <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" d="M12 8v4l3 3m6-3a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
             </svg>
             <span>
-              Viewing the saved AI Enabled Review for <strong>{review.file_name}</strong>
+              Viewing the saved {review.modelUsed === "Excel upload" ? "Excel Review" : "AI Enabled Review"} for <strong>{review.file_name}</strong>
               {review.analyzed_at && <> · analyzed {new Date(review.analyzed_at).toLocaleString()}</>}
             </span>
           </div>
         )}
 
         {/* ── Run panel (no review yet) ── */}
+        {reviewIsStale && review && (
+          <div className="mb-6 space-y-3">
+            <div className="rounded-2xl border border-violet-200 bg-violet-50 p-5 shadow-sm">
+              <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-wide text-violet-600">
+                    New proposal version ready
+                  </p>
+                  <h2 className="mt-1 text-lg font-semibold text-gray-900">Review the newly uploaded proposal</h2>
+                  <p className="mt-1 text-sm text-gray-600">
+                    {latestFinalDocument?.name ?? "The latest proposal version"} has not been reviewed yet. The previous
+                    report is minimized below and cannot be used to approve this version.
+                  </p>
+                </div>
+                <div className="flex shrink-0 flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={handleAnalyze}
+                    disabled={analyzing || proposal.documents.length === 0 || !canRun}
+                    className="rounded-xl bg-violet-600 px-5 py-3 text-sm font-semibold text-white hover:bg-violet-700 disabled:bg-gray-300"
+                  >
+                    {analyzing ? "Reviewing New Proposal..." : "Review New Proposal"}
+                  </button>
+                  {canRun && (
+                    <button
+                      type="button"
+                      onClick={() => excelInputRef.current?.click()}
+                      disabled={importingExcel || analyzing}
+                      className="rounded-xl border border-emerald-300 bg-white px-4 py-3 text-sm font-semibold text-emerald-700 hover:bg-emerald-50 disabled:opacity-50"
+                    >
+                      {importingExcel ? "Importing..." : "Upload Excel Review"}
+                    </button>
+                  )}
+                </div>
+              </div>
+              {analyzing && (
+                <div className="mt-4">
+                  <div className="mb-1 flex items-center justify-between text-xs text-violet-700">
+                    <span>{stage}</span>
+                    <span className="font-semibold tabular-nums">{Math.round(progress)}%</span>
+                  </div>
+                  <div className="h-2 w-full rounded-full bg-violet-100">
+                    <div className="h-2 rounded-full bg-violet-600 transition-all" style={{ width: `${progress}%` }} />
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <div className="rounded-xl border border-gray-200 bg-white px-4 py-3">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <p className="text-sm font-semibold text-gray-800">Previous proposal report</p>
+                  <p className="text-xs text-gray-500">
+                    {review.file_name} · Score {review.overall_score}/100 · reviewed {new Date(review.analyzed_at).toLocaleString()}
+                  </p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={handleDownload}
+                    disabled={downloading}
+                    className="rounded-lg border border-gray-300 px-3 py-2 text-xs font-medium text-gray-600 hover:bg-gray-50 disabled:opacity-50"
+                  >
+                    {downloading ? "Generating..." : "Download Old Report"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setPreviousReportExpanded((expanded) => !expanded)}
+                    className="rounded-lg border border-violet-300 px-3 py-2 text-xs font-medium text-violet-700 hover:bg-violet-50"
+                    aria-expanded={previousReportExpanded}
+                  >
+                    {previousReportExpanded ? "Minimize Old Report" : "View Old Report"}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
         {!review && (
           <div className="bg-white rounded-2xl shadow-sm p-8 max-w-2xl mx-auto">
             <h2 className="text-xl font-semibold mb-1 text-gray-900">Run AI Enabled Review</h2>
@@ -648,11 +804,43 @@ export function AiReviewPanel({ proposalId, embedded = false }: { proposalId: st
                 "Run Deep AI Review"
               )}
             </button>
+
+            {canRun && (
+              <div className="mt-6 border-t border-gray-200 pt-5">
+                <div className="flex items-center gap-3">
+                  <div className="h-px flex-1 bg-gray-200" />
+                  <span className="text-xs font-semibold uppercase tracking-wide text-gray-400">
+                    or import a completed review
+                  </span>
+                  <div className="h-px flex-1 bg-gray-200" />
+                </div>
+                <p className="mt-3 text-center text-sm text-gray-500">
+                  Use the workbook template to provide reviewer scores, checklist results, issues, and improvements.
+                </p>
+                <div className="mt-4 grid gap-2 sm:grid-cols-2">
+                  <button
+                    type="button"
+                    onClick={handleDownloadExcelTemplate}
+                    className="rounded-xl border border-gray-300 bg-white px-4 py-3 text-sm font-semibold text-gray-700 hover:bg-gray-50"
+                  >
+                    Download Excel Template
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => excelInputRef.current?.click()}
+                    disabled={importingExcel}
+                    className="rounded-xl border border-emerald-600 bg-emerald-600 px-4 py-3 text-sm font-semibold text-white hover:bg-emerald-700 disabled:border-gray-300 disabled:bg-gray-300"
+                  >
+                    {importingExcel ? "Importing Excel…" : "Upload Excel Review"}
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         )}
 
         {/* ── OVERVIEW tab ── */}
-        {review && activeTab === "overview" && (
+        {review && showReviewResults && activeTab === "overview" && (
           <div className="space-y-6">
             {review.verdict === "Critical" && (
               <div className="rounded-2xl border-2 border-red-500 bg-red-50 p-5 shadow-sm">
@@ -894,7 +1082,7 @@ export function AiReviewPanel({ proposalId, embedded = false }: { proposalId: st
         )}
 
         {/* ── CHECKLIST tab ── */}
-        {review && activeTab === "checklist" && (
+        {review && showReviewResults && activeTab === "checklist" && (
           <div className="space-y-3">
             <div className="flex items-center justify-between mb-2">
               <p className="text-sm font-medium text-gray-600">
@@ -908,7 +1096,7 @@ export function AiReviewPanel({ proposalId, embedded = false }: { proposalId: st
         )}
 
         {/* ── ERRORS tab ── */}
-        {review && activeTab === "errors" && (
+        {review && showReviewResults && activeTab === "errors" && (
           <div className="space-y-4">
             {errorItems.length === 0 && review.critical_issues.length === 0 ? (
               <div className="bg-white rounded-2xl shadow-sm p-12 text-center">
@@ -967,7 +1155,7 @@ export function AiReviewPanel({ proposalId, embedded = false }: { proposalId: st
         )}
 
         {/* ── WARNINGS tab ── */}
-        {review && activeTab === "warnings" && (
+        {review && showReviewResults && activeTab === "warnings" && (
           <div className="space-y-4">
             {warningItems.length === 0 ? (
               <div className="bg-white rounded-2xl shadow-sm p-12 text-center">
@@ -1004,7 +1192,7 @@ export function AiReviewPanel({ proposalId, embedded = false }: { proposalId: st
         )}
 
         {/* ── IMPROVEMENTS tab ── */}
-        {review && activeTab === "improvements" && (
+        {review && showReviewResults && activeTab === "improvements" && (
           <div className="space-y-4">
             {review.all_improvements.filter((i) => i.priority === "quick_win").length > 0 && (
               <div className="bg-white rounded-2xl shadow-sm border border-green-100 overflow-hidden">
@@ -1054,7 +1242,7 @@ export function AiReviewPanel({ proposalId, embedded = false }: { proposalId: st
         )}
 
         {/* ── RULES tab ── */}
-        {review && activeTab === "rules" && (
+        {review && showReviewResults && activeTab === "rules" && (
           <div className="space-y-4">
             <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-5">
               <div className="flex items-center gap-4 mb-4">
@@ -1111,7 +1299,7 @@ export function AiReviewPanel({ proposalId, embedded = false }: { proposalId: st
         )}
 
         {/* ── COVERAGE tab ── */}
-        {review && activeTab === "coverage" && coverage && (
+        {review && showReviewResults && activeTab === "coverage" && coverage && (
           <div className="space-y-4">
             <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-5">
               <div className="flex items-center gap-4 mb-4">
@@ -1204,7 +1392,7 @@ export function AiReviewPanel({ proposalId, embedded = false }: { proposalId: st
         )}
 
         {/* ── NUMERICAL CHECK tab ── */}
-        {review && activeTab === "numerical" && numerical && (
+        {review && showReviewResults && activeTab === "numerical" && numerical && (
           <div className="space-y-4">
             <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-5">
               <div className="grid grid-cols-3 gap-3 mb-4">

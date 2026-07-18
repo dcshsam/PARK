@@ -128,7 +128,7 @@ function getCycleProgress(
     milestones: MILESTONES.map((m) => ({ ...m, status: statusFor(m.key) })),
     inFeedback: isCurrent && currentStage === feedbackS,
     inRework: isCurrent && currentStage === reworkS,
-    iteration: cycle?.iteration ?? 1,
+    iteration: cycle?.iteration ?? 0,
   };
 }
 
@@ -225,8 +225,10 @@ export function WorkflowRoadmap({
   const isFinalized = currentStage === "approved" || currentStage === "rejected";
   const isRework = Boolean(currentStage?.endsWith("_rework"));
 
-  // A review only counts for the review stage it was run in: each cycle (SPARC,
-  // Delivery) and each resubmitted version demands a fresh AI review run.
+  // The AI review is mandatory for the SPARC proposal-review decision. Delivery
+  // reviewers use that completed analysis plus their delivery checks, so their
+  // Approve / Reject actions must remain available without rerunning the AI.
+  // A proposal resubmitted into SPARC review still demands a fresh analysis.
   const lastResubmittedAt = events
     .filter((e) => e.type === "changes_submitted")
     .reduce<Date | null>((latest, e) => (!latest || e.createdAt > latest ? e.createdAt : latest), null);
@@ -237,7 +239,10 @@ export function WorkflowRoadmap({
   const deepReviewIsCurrent =
     Boolean(deepReview) &&
     (!reviewStaleAfter || new Date(deepReview!.analyzed_at) > reviewStaleAfter);
-  const awaitingDeepReview = Boolean(currentStage?.endsWith("_review")) && !deepReviewIsCurrent;
+  const awaitingDeepReview =
+    currentCycleType === "proposal" &&
+    Boolean(currentStage?.endsWith("_review")) &&
+    !deepReviewIsCurrent;
   const availableActions = awaitingDeepReview ? [] : getAvailableActions(proposal);
 
   const stageDurations = useMemo(() => getStageDurations(events), [events]);
@@ -272,8 +277,8 @@ export function WorkflowRoadmap({
     : currentStageDuration;
   const heroTotalTime = focusCycleType ? (focusSummary?.durationMs ?? 0) : totalDuration;
   const heroIteration = focusCycleType
-    ? (focusCycle?.iteration ?? 1)
-    : (cycles.find((c) => c.id === proposal.currentCycleId)?.iteration ?? 1);
+    ? (focusCycle?.iteration ?? 0)
+    : (cycles.find((c) => c.id === proposal.currentCycleId)?.iteration ?? 0);
   const inCreation = currentStage === "intake";
   const creationDone = Boolean(currentStage) && currentStage !== "intake";
   const ddAt = proposal.dueDiligenceStartedAt;
@@ -649,7 +654,7 @@ export function WorkflowRoadmap({
                 </div>
 
                 {/* Rework-loop indicator */}
-                {(prog.inFeedback || prog.inRework || prog.iteration > 1) && (
+                {(prog.inFeedback || prog.inRework || prog.iteration > 0) && (
                   <div
                     className={cn(
                       "mt-4 flex items-center gap-2 rounded-lg border px-3 py-2 text-xs",
@@ -665,7 +670,7 @@ export function WorkflowRoadmap({
                           ? "Changes in rework — will return to Review"
                           : "Revised after requested changes"}
                     </span>
-                    {prog.iteration > 1 && (
+                    {prog.iteration > 0 && (
                       <span className={cn("ml-auto rounded-full px-2 py-0.5 font-semibold text-white", theme.bg)}>
                         Iteration {prog.iteration}
                       </span>

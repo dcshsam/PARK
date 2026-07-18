@@ -72,10 +72,19 @@ class ProposalDatabase extends Dexie {
     this.version(10).stores({
       leads: "++id, kytesId, status, createdAt, updatedAt",
     });
-    // v11: Jarvis voice assistant conversation log.
+    // v11: Jarvis assistant conversation log.
     this.version(11).stores({
       jarvisMessages: "++id, createdAt",
     });
+    this.version(12)
+      .stores({
+        workflowCycles: "++id, proposalId, cycleType, iteration, startedAt, [proposalId+cycleType]",
+      })
+      .upgrade((transaction) =>
+        transaction.table("workflowCycles").toCollection().modify((cycle) => {
+          cycle.iteration = Math.max(0, Number(cycle.iteration ?? 1) - 1);
+        })
+      );
   }
 }
 
@@ -227,7 +236,7 @@ export async function getProposal(id: string): Promise<Proposal | undefined> {
       id: crypto.randomUUID(),
       proposalId: id,
       cycleType,
-      iteration: 1,
+      iteration: 0,
       stage,
       startedAt: record.createdAt ? new Date(record.createdAt) : now,
       completedAt: stage === "approved" || stage === "rejected" ? now : undefined,

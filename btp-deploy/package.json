@@ -11,9 +11,7 @@
     "test:smoke": "node scripts/smoke-test.mjs"
   },
   "dependencies": {
-    "@huggingface/transformers": "^3.8.1",
     "@opendocsg/pdf2md": "^0.2.7",
-    "@ricky0123/vad-web": "^0.0.30",
     "@svar-ui/react-gantt": "^2.7.1",
     "clsx": "^2.1.1",
     "date-fns": "^4.4.0",
@@ -21,7 +19,6 @@
     "framer-motion": "^12.42.2",
     "jspdf": "^4.2.1",
     "jspdf-autotable": "^5.0.8",
-    "kokoro-js": "^1.2.1",
     "lucide-react": "^1.21.0",
     "mammoth": "^1.12.0",
     "next": "16.2.9",

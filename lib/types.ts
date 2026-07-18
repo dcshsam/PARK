@@ -107,6 +107,8 @@ export interface Proposal {
   projectType?: string;
   sparcOwner?: string;
   sparcMentor?: string;
+  /** Team members collaborating on this proposal, selected during Event 1. */
+  contributors?: string[];
   gtmOwner?: string;
   proposalReviewer?: string;
   proposalRegion?: string;
@@ -136,6 +138,7 @@ export interface ProposalInput {
   projectType?: string;
   sparcOwner?: string;
   sparcMentor?: string;
+  contributors?: string[];
   gtmOwner?: string;
   proposalReviewer?: string;
   proposalRegion?: string;
@@ -199,6 +202,8 @@ export interface Lead {
   /** Optional Proposal Basic Info fields captured early so Event 5 doesn't re-ask for them. */
   sparcOwner?: string;
   sparcMentor?: string;
+  /** Team members assigned as proposal contributors in Event 1. */
+  contributors?: string[];
   proposalReviewer?: string;
   proposalRegion?: string;
   documents: LeadDocument[];
@@ -220,6 +225,14 @@ export interface LeadDocument {
   mimeType: string;
   content?: string;
   extractedText?: string;
+}
+
+/** A dated note added to an individual Proposal Master event. */
+export interface LeadPhaseComment {
+  id: string;
+  text: string;
+  author: string;
+  createdAt: Date | string;
 }
 
 export const leadStatusLabels: Record<LeadStatus, string> = {
@@ -251,5 +264,9 @@ export interface TeamActivity {
   endDate: Date;
   category: TeamActivityCategory;
   proposalId?: string;
+  /** Lead that generated this activity before its proposal exists. */
+  leadId?: string;
+  /** Identifies activity records maintained automatically by Event 1. */
+  source?: "event1_contributor";
   notes?: string;
 }

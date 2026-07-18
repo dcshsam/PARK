@@ -1,4 +1,4 @@
-// Jarvis voice assistant — shared types.
+// Jarvis text assistant — shared types.
 //
 // The agent loop is provider-agnostic: the LLM replies with a structured JSON
 // object (tool_call | answer) instead of provider-native function calling, so
@@ -6,10 +6,8 @@
 
 export type JarvisStatus =
   | "idle"
-  | "listening"
   | "thinking"
-  | "confirming"
-  | "speaking";
+  | "confirming";
 
 export interface JarvisMessageRecord {
   id?: number;
@@ -55,11 +53,11 @@ export interface ToolDefinition {
 /** Parsed LLM reply under the structured-JSON contract. */
 export type LlmReply =
   | { type: "tool_call"; tool: string; args: Record<string, unknown> }
-  | { type: "answer"; speech: string; display?: string };
+  | { type: "answer"; content: string };
 
 /** Outcome of one agent turn, as seen by the UI state machine. */
 export type TurnOutcome =
-  | { kind: "answer"; speech: string; display?: string }
+  | { kind: "answer"; content: string }
   | {
       kind: "confirm";
       toolCall: ToolCall;

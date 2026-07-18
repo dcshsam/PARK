@@ -5,15 +5,20 @@ import Link from "next/link";
 import { motion } from "framer-motion";
 import { getLeads, getDeepReviewMap } from "@/lib/db";
 import type { DeepReview } from "@/lib/deep-review/types";
-import { ProposalScoreBadge } from "@/components/proposal-score-badge";
-import type { Lead, LeadStatus, TeamActivity, TeamActivityCategory } from "@/lib/types";
+import type { Lead, TeamActivity, TeamActivityCategory } from "@/lib/types";
 import { leadStatusLabels } from "@/lib/types";
-import { LEAD_EVENT_SHORT, LEAD_STATUS_COLORS, LEAD_STATUS_BADGE, LEAD_STATUS_ORDER } from "@/lib/lead-events";
+import { LEAD_EVENT_SHORT, LEAD_STATUS_COLORS, LEAD_STATUS_ORDER } from "@/lib/lead-events";
 import { getTeamActivities, teamActivityCategoryLabels } from "@/lib/team-activity";
 import { getTeamMembers, seedTeamMembers } from "@/lib/team-members";
 import type { TeamMember } from "@/lib/team-members";
+import {
+  PROPOSAL_PERIOD_OPTIONS,
+  proposalInPeriod,
+  proposalMasterHref,
+  type ProposalPeriod,
+  type ProposalPipelineFilter,
+} from "@/lib/proposal-dashboard-filters";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { formatDate, cn } from "@/lib/utils";
 import {
@@ -28,6 +33,15 @@ import {
   AlertCircle,
   Users,
   CalendarDays,
+  SearchCheck,
+  FilePenLine,
+  ShieldCheck,
+  PackageCheck,
+  Presentation,
+  Flag,
+  Gauge,
+  UserPlus,
+  Euro,
 } from "lucide-react";
 import {
   ResponsiveContainer,
@@ -120,6 +134,7 @@ export default function DashboardPage() {
   const [teamMembers, setTeamMembers] = useState<TeamMember[]>([]);
   const [activities, setActivities] = useState<TeamActivity[]>([]);
   const [loading, setLoading] = useState(true);
+  const [proposalPeriod, setProposalPeriod] = useState<ProposalPeriod>("all");
 
   useEffect(() => {
     seedTeamMembers();
@@ -133,41 +148,146 @@ export default function DashboardPage() {
   }, []);
 
   // ── Proposal Master pipeline (leads presented as proposals) ────────────────
+  const periodLeads = useMemo(
+    () => leads.filter((lead) => proposalInPeriod(lead, proposalPeriod)),
+    [leads, proposalPeriod]
+  );
+
   const leadStats = useMemo(() => {
-    const total = leads.length;
-    const converted = leads.filter((l) => l.status === "converted").length;
-    const dropped = leads.filter((l) => l.status === "dropped").length;
-    const onHold = leads.filter((l) => l.status === "on_hold").length;
+    const total = periodLeads.length;
+    const converted = periodLeads.filter((l) => l.status === "converted").length;
+    const dropped = periodLeads.filter((l) => l.status === "dropped").length;
+    const onHold = periodLeads.filter((l) => l.status === "on_hold").length;
     const active = total - converted - dropped;
     const decided = converted + dropped;
     const conversionRate = decided > 0 ? Math.round((converted / decided) * 100) : null;
     return { total, active, converted, dropped, onHold, conversionRate };
-  }, [leads]);
+  }, [periodLeads]);
 
   const leadFunnelData = useMemo(
     () =>
       LEAD_EVENT_SHORT.map((label, i) => ({
         name: `${i + 1}. ${label}`,
         short: label,
-        value: leads.filter((l) => l.status !== "dropped" && (l.currentEvent ?? 1) === i + 1).length,
+        value: periodLeads.filter((l) => l.status !== "dropped" && (l.currentEvent ?? 1) === i + 1).length,
       })),
-    [leads]
+    [periodLeads]
   );
 
   const leadStatusData = useMemo(() => {
     return LEAD_STATUS_ORDER
-      .map((s) => ({ name: leadStatusLabels[s], status: s, value: leads.filter((l) => l.status === s).length }))
+      .map((s) => ({ name: leadStatusLabels[s], status: s, value: periodLeads.filter((l) => l.status === s).length }))
       .filter((d) => d.value > 0);
-  }, [leads]);
+  }, [periodLeads]);
 
-  const activeLeads = useMemo(
-    () =>
-      leads
-        .filter((l) => l.status !== "converted" && l.status !== "dropped")
-        .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())
-        .slice(0, 6),
-    [leads]
-  );
+  const pipelineStageKpis = useMemo(() => {
+    const open = periodLeads.filter((lead) => lead.status !== "converted" && lead.status !== "dropped");
+    const countAt = (...events: number[]) => open.filter((lead) => events.includes(lead.currentEvent ?? 1)).length;
+    const periodProposalIds = new Set(periodLeads.map((lead) => lead.proposalId).filter(Boolean));
+    const completedReviews = Array.from(reviews.values()).filter(
+      (review) => periodProposalIds.has(review.proposalId) && Number.isFinite(review.overall_score)
+    );
+    const averageReviewScore = completedReviews.length
+      ? Math.round(completedReviews.reduce((total, review) => total + review.overall_score, 0) / completedReviews.length)
+      : null;
+    const headcountAdded = periodLeads.reduce((total, lead) => total + (lead.dlvHeadCount ?? 0), 0);
+    const dlvAdded = periodLeads.reduce((total, lead) => total + (lead.dlvCost ?? 0), 0);
+    return [
+      {
+        label: "Qualification",
+        detail: "Events 1–3",
+        value: countAt(1, 2, 3),
+        icon: SearchCheck,
+        color: "text-sky-600",
+        bg: "bg-sky-50 dark:bg-sky-500/10",
+        href: proposalMasterHref({ period: proposalPeriod, pipeline: "active", events: [1, 2, 3] }),
+      },
+      {
+        label: "Proposal Creation",
+        detail: "Event 4",
+        value: countAt(4),
+        icon: FilePenLine,
+        color: "text-indigo-600",
+        bg: "bg-indigo-50 dark:bg-indigo-500/10",
+        href: proposalMasterHref({ period: proposalPeriod, pipeline: "active", event: 4 }),
+      },
+      {
+        label: "SPARC Review",
+        detail: "Event 5",
+        value: countAt(5),
+        icon: ShieldCheck,
+        color: "text-blue-600",
+        bg: "bg-blue-50 dark:bg-blue-500/10",
+        href: proposalMasterHref({ period: proposalPeriod, pipeline: "active", event: 5 }),
+      },
+      {
+        label: "Delivery Review",
+        detail: "Event 6",
+        value: countAt(6),
+        icon: PackageCheck,
+        color: "text-violet-600",
+        bg: "bg-violet-50 dark:bg-violet-500/10",
+        href: proposalMasterHref({ period: proposalPeriod, pipeline: "active", event: 6 }),
+      },
+      {
+        label: "Customer Pitch",
+        detail: "Event 7",
+        value: countAt(7),
+        icon: Presentation,
+        color: "text-amber-600",
+        bg: "bg-amber-50 dark:bg-amber-500/10",
+        href: proposalMasterHref({ period: proposalPeriod, pipeline: "active", event: 7 }),
+      },
+      {
+        label: "Closure",
+        detail: "Event 8",
+        value: countAt(8),
+        icon: Flag,
+        color: "text-emerald-600",
+        bg: "bg-emerald-50 dark:bg-emerald-500/10",
+        href: proposalMasterHref({ period: proposalPeriod, pipeline: "active", event: 8 }),
+      },
+      {
+        label: "Headcount Added",
+        detail: "DLV people",
+        value: headcountAdded.toLocaleString(),
+        icon: UserPlus,
+        color: "text-cyan-600",
+        bg: "bg-cyan-50 dark:bg-cyan-500/10",
+        href: proposalMasterHref({ period: proposalPeriod, metric: "headcount" }),
+      },
+      {
+        label: "DLV Added",
+        detail: "estimated value",
+        value: `€${new Intl.NumberFormat("en", { notation: "compact", maximumFractionDigits: 1 }).format(dlvAdded)}`,
+        icon: Euro,
+        color: "text-lime-700",
+        bg: "bg-lime-50 dark:bg-lime-500/10",
+        href: proposalMasterHref({ period: proposalPeriod, metric: "dlv" }),
+      },
+      {
+        label: "Avg Review Score",
+        detail: `${completedReviews.length} completed`,
+        value: averageReviewScore === null ? "—" : `${averageReviewScore}%`,
+        icon: Gauge,
+        color: averageReviewScore === null
+          ? "text-slate-500"
+          : averageReviewScore >= 80
+            ? "text-emerald-600"
+            : averageReviewScore >= 60
+              ? "text-amber-600"
+              : "text-red-600",
+        bg: averageReviewScore === null
+          ? "bg-slate-100 dark:bg-slate-500/10"
+          : averageReviewScore >= 80
+            ? "bg-emerald-50 dark:bg-emerald-500/10"
+            : averageReviewScore >= 60
+              ? "bg-amber-50 dark:bg-amber-500/10"
+              : "bg-red-50 dark:bg-red-500/10",
+        href: proposalMasterHref({ period: proposalPeriod, reviewed: true }),
+      },
+    ];
+  }, [periodLeads, proposalPeriod, reviews]);
 
   // ── Team activity KPIs ─────────────────────────────────────────────────────
   const now = new Date();
@@ -251,25 +371,59 @@ export default function DashboardPage() {
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.5, delay: 0.15 }}
       >
-        <div>
-          <h2 className="text-lg font-semibold text-text-primary">Proposal Master pipeline</h2>
-          <p className="text-sm text-text-tertiary">Where every proposal sits in the 8-event journey, and who owns it.</p>
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
+          <div>
+            <h2 className="text-lg font-semibold text-text-primary">Proposal Master pipeline</h2>
+            <p className="text-sm text-text-tertiary">Where every proposal sits in the 8-event journey, and who owns it.</p>
+          </div>
+          <div className="grid grid-cols-2 gap-2 sm:flex" role="group" aria-label="Proposal period">
+            {PROPOSAL_PERIOD_OPTIONS.map((option) => {
+              const active = proposalPeriod === option.value;
+              return (
+                <button
+                  key={option.value}
+                  type="button"
+                  onClick={() => setProposalPeriod(option.value)}
+                  aria-pressed={active}
+                  className={cn(
+                    "rounded-lg border px-4 py-2 text-sm font-semibold transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500",
+                    active
+                      ? "border-primary-600 bg-primary-600 text-white shadow-sm"
+                      : "border-border bg-surface text-text-secondary hover:border-primary-300 hover:text-primary-700"
+                  )}
+                >
+                  {option.label}
+                </button>
+              );
+            })}
+          </div>
         </div>
 
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
           {[
-            { icon: Users, label: "Total Proposals", value: leadStats.total, color: "text-white", gradient: cardGradients[0] },
-            { icon: TrendingUp, label: "Active Pipeline", value: leadStats.active, color: "text-white", gradient: cardGradients[1] },
+            { icon: Users, label: "Total Proposals", value: leadStats.total, gradient: cardGradients[0], pipeline: "all" as ProposalPipelineFilter },
+            { icon: TrendingUp, label: "Active Pipeline", value: leadStats.active, gradient: cardGradients[1], pipeline: "active" as ProposalPipelineFilter },
             {
               icon: CheckCircle2,
               label: "Converted",
               value: leadStats.conversionRate === null ? leadStats.converted : `${leadStats.converted} (${leadStats.conversionRate}%)`,
-              color: "text-white",
               gradient: cardGradients[2],
+              pipeline: "converted" as ProposalPipelineFilter,
             },
-            { icon: AlertCircle, label: "On Hold / Dropped", value: leadStats.onHold + leadStats.dropped, color: "text-white", gradient: cardGradients[3] },
+            { icon: AlertCircle, label: "On Hold / Dropped", value: leadStats.onHold + leadStats.dropped, gradient: cardGradients[3], pipeline: "attention" as ProposalPipelineFilter },
           ].map((stat, idx) => (
-            <StatCard key={stat.label} {...stat} index={idx} />
+            <StatCard
+              key={stat.label}
+              {...stat}
+              index={idx}
+              href={proposalMasterHref({ period: proposalPeriod, pipeline: stat.pipeline })}
+            />
+          ))}
+        </div>
+
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4 2xl:grid-cols-9">
+          {pipelineStageKpis.map((stat) => (
+            <CompactKpiTile key={stat.label} {...stat} />
           ))}
         </div>
 
@@ -284,7 +438,7 @@ export default function DashboardPage() {
             <CardContent>
               {loading ? (
                 <div className="h-64 animate-pulse rounded-xl bg-surface-muted" />
-              ) : leads.length === 0 ? (
+              ) : periodLeads.length === 0 ? (
                 <EmptyState message="No proposals yet. Create your first proposal in Proposal Master." />
               ) : (
                 <div className="h-64">
@@ -348,63 +502,6 @@ export default function DashboardPage() {
           </Card>
         </div>
 
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Users size={20} className="text-primary-600" /> Active proposals — ownership
-            </CardTitle>
-            <CardDescription>Who is responsible for what, and where each proposal stands.</CardDescription>
-          </CardHeader>
-          <CardContent>
-            {activeLeads.length === 0 ? (
-              <EmptyState message="No active proposals right now." />
-            ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="border-b border-border text-left text-xs font-medium uppercase text-text-tertiary">
-                      <th className="pb-2 pr-4">Proposal</th>
-                      <th className="pb-2 pr-4">GTM</th>
-                      <th className="pb-2 pr-4">SPARC Mentor</th>
-                      <th className="pb-2 pr-4">Region</th>
-                      <th className="pb-2 pr-4">Vertical</th>
-                      <th className="pb-2 pr-4">Event</th>
-                      <th className="pb-2 pr-4">Status</th>
-                      <th className="pb-2">Score</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {activeLeads.map((lead) => (
-                      <tr key={lead.id} className="border-b border-border/60 last:border-0 hover:bg-surface-muted/40">
-                        <td className="py-3 pr-4">
-                          <Link href={`/leads/${lead.id}`} className="group">
-                            <p className="font-medium text-text-primary group-hover:text-primary-600">{lead.leadName}</p>
-                            <p className="text-xs text-text-tertiary">{lead.clientName || "—"}</p>
-                          </Link>
-                        </td>
-                        <td className="py-3 pr-4 text-text-secondary">{lead.gtmName || "—"}</td>
-                        <td className="py-3 pr-4 text-text-secondary">{lead.sparcMentor || "—"}</td>
-                        <td className="py-3 pr-4 text-text-secondary">{lead.proposalRegion || "—"}</td>
-                        <td className="py-3 pr-4 text-text-secondary">{lead.vertical || "—"}</td>
-                        <td className="py-3 pr-4">
-                          <span className="whitespace-nowrap rounded-full bg-surface-muted px-2 py-0.5 text-xs font-medium text-text-secondary">
-                            {lead.currentEvent ?? 1}/8 · {LEAD_EVENT_SHORT[(lead.currentEvent ?? 1) - 1]}
-                          </span>
-                        </td>
-                        <td className="py-3 pr-4">
-                          <Badge className={LEAD_STATUS_BADGE[lead.status]}>{leadStatusLabels[lead.status]}</Badge>
-                        </td>
-                        <td className="py-3">
-                          <ProposalScoreBadge lead={lead} reviews={reviews} />
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </CardContent>
-        </Card>
       </motion.div>
 
       {/* Quick link to analytics */}
@@ -603,12 +700,14 @@ function StatCard({
   value,
   gradient,
   index,
+  href,
 }: {
   icon: React.ElementType;
   label: string;
   value: number | string;
   gradient: string;
   index: number;
+  href: string;
 }) {
   return (
     <motion.div
@@ -616,21 +715,23 @@ function StatCard({
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.4, delay: 0.1 + index * 0.05 }}
     >
-      <Card className={cn("relative overflow-hidden border-0 text-white shadow-md", `bg-gradient-to-br ${gradient}`)}>
-        <CardContent className="relative z-10 flex items-center justify-between p-5">
-          <div>
-            <p className="text-3xl font-bold">{value}</p>
-            <p className="mt-1 text-sm font-medium text-white/90">{label}</p>
-          </div>
-          <div className="flex flex-col items-end gap-2">
-            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-white/20 backdrop-blur-sm">
-              <Icon size={22} className="text-white" />
+      <Link href={href} className="block rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2" aria-label={`Open ${label} proposals`}>
+        <Card className={cn("group relative cursor-pointer overflow-hidden border-0 text-white shadow-md transition-all hover:-translate-y-0.5 hover:shadow-lg", `bg-gradient-to-br ${gradient}`)}>
+          <CardContent className="relative z-10 flex items-center justify-between p-5">
+            <div>
+              <p className="text-3xl font-bold">{value}</p>
+              <p className="mt-1 text-sm font-medium text-white/90">{label}</p>
             </div>
-            <Sparkline color="#ffffff" />
-          </div>
-        </CardContent>
-        <div className="absolute -bottom-6 -right-6 h-24 w-24 rounded-full bg-white/10 blur-xl" />
-      </Card>
+            <div className="flex flex-col items-end gap-2">
+              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-white/20 backdrop-blur-sm transition-transform group-hover:scale-105">
+                <Icon size={22} className="text-white" />
+              </div>
+              <Sparkline color="#ffffff" />
+            </div>
+          </CardContent>
+          <div className="absolute -bottom-6 -right-6 h-24 w-24 rounded-full bg-white/10 blur-xl" />
+        </Card>
+      </Link>
     </motion.div>
   );
 }
@@ -658,6 +759,41 @@ function InsightTile({
         <p className="truncate text-sm font-bold text-text-primary">{value}</p>
       </div>
     </div>
+  );
+}
+
+function CompactKpiTile({
+  label,
+  detail,
+  value,
+  icon: Icon,
+  color,
+  bg,
+  href,
+}: {
+  label: string;
+  detail: string;
+  value: number | string;
+  icon: React.ElementType;
+  color: string;
+  bg: string;
+  href: string;
+}) {
+  return (
+    <Link href={href} className="flex min-w-0 items-center gap-2.5 rounded-lg border border-border bg-surface px-3 py-2 shadow-sm transition-all hover:border-primary-300 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500" aria-label={`Open ${label} proposals`}>
+      <div className={cn("flex h-8 w-8 shrink-0 items-center justify-center rounded-md", bg, color)}>
+        <Icon size={16} />
+      </div>
+      <div className="min-w-0">
+        <div className="flex items-baseline gap-1.5">
+          <p className="text-lg font-bold leading-none text-text-primary">{value}</p>
+          <span className="text-[10px] text-text-muted">{detail}</span>
+        </div>
+        <p className="mt-1 truncate text-[11px] font-medium leading-none text-text-secondary" title={label}>
+          {label}
+        </p>
+      </div>
+    </Link>
   );
 }
 

@@ -6,7 +6,7 @@ import { motion } from "framer-motion";
 import { getLeads, getDeepReviewMap } from "@/lib/db";
 import type { DeepReview } from "@/lib/deep-review/types";
 import { ProposalScoreBadge } from "@/components/proposal-score-badge";
-import type { Lead, LeadStatus, TeamActivity, TeamActivityCategory } from "@/lib/types";
+import type { Lead, TeamActivity, TeamActivityCategory } from "@/lib/types";
 import { leadStatusLabels } from "@/lib/types";
 import { LEAD_EVENT_SHORT, LEAD_STATUS_COLORS, LEAD_STATUS_BADGE, LEAD_STATUS_ORDER } from "@/lib/lead-events";
 import { getTeamActivities, teamActivityCategoryLabels } from "@/lib/team-activity";

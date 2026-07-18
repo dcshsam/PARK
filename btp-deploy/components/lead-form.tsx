@@ -80,6 +80,18 @@ function getActivePausedEvent(lead: Lead | undefined): number | undefined {
   return undefined;
 }
 
+function hasPreReviewRequirements(lead: Lead | undefined): boolean {
+  if (!lead || lead.dlvCost === undefined || lead.dlvHeadCount === undefined) return false;
+  const event2 = (lead.eventData?.event2 ?? {}) as {
+    drbApproved?: string;
+    drbApprovedDate?: string;
+  };
+  return Boolean(
+    event2.drbApproved?.trim() &&
+      (event2.drbApproved !== "yes" || event2.drbApprovedDate?.trim())
+  );
+}
+
 function effectiveEventDurationMs(start: Date, end: Date, pauses: EventPausePeriod[], now: Date): number {
   const endMs = end.getTime();
   const pausedMs = pauses.reduce((total, pause) => {
@@ -376,7 +388,11 @@ export function LeadForm({ lead: leadProp }: LeadFormProps) {
   };
 
   const pausedEvent = getActivePausedEvent(lead);
-  const initialStep = pausedEvent ?? lead?.currentEvent ?? 1;
+  const requestedInitialStep = pausedEvent ?? lead?.currentEvent ?? 1;
+  const initialStep =
+    requestedInitialStep >= REVIEW_EVENT_START && !hasPreReviewRequirements(lead)
+      ? REVIEW_EVENT_START - 1
+      : requestedInitialStep;
   const [step, setStep] = useState(initialStep);
   const [submitting, setSubmitting] = useState(false);
   const [clockNow, setClockNow] = useState(() => new Date());
@@ -465,14 +481,44 @@ export function LeadForm({ lead: leadProp }: LeadFormProps) {
 
   // Event 5 — Proposal Review (SPARC), mapped to the existing Proposal review workflow.
   const [linkedProposal, setLinkedProposal] = useState<Proposal | null>(null);
-  const [loadingProposal, setLoadingProposal] = useState(false);
+  const [loadingProposal, setLoadingProposal] = useState(Boolean(leadProp?.proposalId));
+  const [proposalLoadError, setProposalLoadError] = useState("");
 
   useEffect(() => {
-    if (!lead?.proposalId) return;
-    Promise.resolve().then(() => setLoadingProposal(true));
-    getProposal(lead.proposalId)
-      .then((p) => setLinkedProposal(p ?? null))
-      .finally(() => setLoadingProposal(false));
+    let cancelled = false;
+    const proposalId = lead?.proposalId;
+
+    if (!proposalId) {
+      Promise.resolve().then(() => {
+        if (cancelled) return;
+        setLinkedProposal(null);
+        setProposalLoadError("");
+        setLoadingProposal(false);
+      });
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    Promise.resolve().then(() => {
+      if (!cancelled) setLoadingProposal(true);
+    });
+    getProposal(proposalId)
+      .then((proposal) => {
+        if (cancelled) return;
+        setLinkedProposal(proposal ?? null);
+        setProposalLoadError(proposal ? "" : "The linked proposal could not be found. Please contact an administrator.");
+      })
+      .catch(() => {
+        if (!cancelled) setProposalLoadError("The linked proposal could not be loaded. Please try again.");
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingProposal(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
   }, [lead?.proposalId]);
 
   const event2Data = (lead?.eventData?.event2 ?? {}) as Record<string, string> & { activityLog?: LeadEventActivity[] };
@@ -1131,18 +1177,9 @@ export function LeadForm({ lead: leadProp }: LeadFormProps) {
 
   useEffect(() => {
     if (
-      step >= REVIEW_EVENT_START &&
-      lead &&
-      (!deliveryEstimatePersisted || !drbApprovalPersisted)
-    ) {
-      setStep(REVIEW_EVENT_START - 1);
-    }
-  }, [step, lead, deliveryEstimatePersisted, drbApprovalPersisted]);
-
-  useEffect(() => {
-    if (
       step < REVIEW_EVENT_START ||
       !lead ||
+      Boolean(lead.proposalId) ||
       !deliveryEstimatePersisted ||
       !drbApprovalPersisted ||
       linkedProposal ||
@@ -2093,9 +2130,21 @@ export function LeadForm({ lead: leadProp }: LeadFormProps) {
                 onChange={handleLinkedProposalChange}
                 hideCreationPhase
                 visibleCycles={[REVIEW_EVENT_CYCLE[step] ?? "proposal"]}
-                beforeHistory={<AiReviewPanel proposalId={linkedProposal.id} embedded />}
+                beforeHistory={
+                  <AiReviewPanel
+                    key={`${linkedProposal.id}-${linkedProposal.documents.length}-${linkedProposal.workflowEvents.length}`}
+                    proposalId={linkedProposal.id}
+                    embedded
+                  />
+                }
               />
             </>
+          ) : proposalLoadError ? (
+            <Card>
+              <CardContent className="py-8 text-center text-sm text-danger-600">
+                {proposalLoadError}
+              </CardContent>
+            </Card>
           ) : null}
         </div>
       ) : (

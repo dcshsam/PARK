@@ -119,6 +119,11 @@ export default function ProposalDetailPage() {
                 <Info label="GTM Owner">
                   <p className="text-sm text-text-primary">{proposal.gtmOwner || "Not set"}</p>
                 </Info>
+                <Info label="Contributors">
+                  <p className="text-sm text-text-primary">
+                    {proposal.contributors?.length ? proposal.contributors.join(", ") : "Not set"}
+                  </p>
+                </Info>
                 <Info label="Proposal Reviewer">
                   <p className="text-sm text-text-primary">{proposal.proposalReviewer || "Not set"}</p>
                 </Info>

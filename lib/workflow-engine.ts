@@ -164,7 +164,7 @@ async function handleSubmitForReview(
   const cycle = await addWorkflowCycle({
     proposalId: proposal.id,
     cycleType: "proposal",
-    iteration: 1,
+    iteration: 0,
     stage: reviewStage,
     startedAt: now,
     status: "active",
@@ -304,7 +304,7 @@ async function handleApprove(
       const newCycle = await addWorkflowCycle({
         proposalId: proposal.id,
         cycleType: nextCycleType,
-        iteration: 1,
+        iteration: 0,
         stage: nextCycleStartStage,
         startedAt: now,
         status: "active",
@@ -387,6 +387,7 @@ async function handleReject(
     await updateWorkflowCycle(currentCycle.id, {
       status: "completed",
       completedAt: now,
+      iteration: currentCycle.iteration + 1,
     });
   }
 
@@ -527,8 +528,8 @@ export async function startNewVersionCycle(
   const existingCyclesOfType = proposal.workflowCycles.filter((c) => c.cycleType === cycleType);
   const iteration =
     existingCyclesOfType.length > 0
-      ? Math.max(...existingCyclesOfType.map((c) => c.iteration)) + 1
-      : 1;
+      ? Math.max(...existingCyclesOfType.map((c) => c.iteration))
+      : 0;
 
   const newCycle = await addWorkflowCycle({
     proposalId,

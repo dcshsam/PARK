@@ -38,7 +38,7 @@ export function getLatestDocsByCategory(proposal: Proposal): Record<UploadedFile
     proposal.workflowCycles.map((cycle) => [
       cycle.id,
       {
-        iteration: cycle.iteration ?? 1,
+        iteration: cycle.iteration ?? 0,
         startedAt: new Date(cycle.startedAt).getTime(),
       },
     ])

@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
-import { deleteLead, getLeads, seedSampleLeads, getDeepReviewMap } from "@/lib/db";
+import { Suspense, useEffect, useMemo, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { deleteLead, getLeads, getProposals, seedSampleLeads, getDeepReviewMap } from "@/lib/db";
 import type { DeepReview } from "@/lib/deep-review/types";
 import { useProfile } from "@/components/profile-provider";
 import { RequireAccess } from "@/components/require-access";
@@ -15,6 +15,13 @@ import { ProposalScoreBadge } from "@/components/proposal-score-badge";
 import { leadStatusLabels, type Lead } from "@/lib/types";
 import { LEAD_EVENT_LABELS, LEAD_STATUS_BADGE } from "@/lib/lead-events";
 import { cn, formatDate } from "@/lib/utils";
+import {
+  PROPOSAL_PERIOD_OPTIONS,
+  parseProposalPeriod,
+  parseProposalPipelineFilter,
+  proposalInPeriod,
+  proposalMatchesPipeline,
+} from "@/lib/proposal-dashboard-filters";
 import { Plus, Trash2, FileText, Eye, Pencil, Database, Loader2, Search, SlidersHorizontal, RotateCcw, ArrowUpDown } from "lucide-react";
 
 type LeadSort = "updated_desc" | "updated_asc" | "name_asc" | "name_desc" | "client_asc" | "event_desc";
@@ -25,6 +32,16 @@ function sparcOwnerFor(lead: Lead) {
 
 function uniqueValues(values: string[]) {
   return Array.from(new Set(values.filter(Boolean))).sort((a, b) => a.localeCompare(b));
+}
+
+function IterationBadge({ lead, iterations }: { lead: Lead; iterations: Map<string, number> }) {
+  const iteration = lead.proposalId ? iterations.get(lead.proposalId) ?? 0 : 0;
+  if (iteration <= 0) return null;
+  return (
+    <Badge className="border border-violet-200 bg-violet-50 text-violet-700 dark:border-violet-700 dark:bg-violet-500/10 dark:text-violet-300">
+      Iteration {iteration}
+    </Badge>
+  );
 }
 
 function FilterSelect({
@@ -51,8 +68,12 @@ function FilterSelect({
 // the track where it is and greys the active dot.
 function LeadStageTrack({ lead }: { lead: Lead }) {
   const current = Math.min(Math.max(lead.currentEvent, 1), LEAD_EVENT_LABELS.length);
-  const completed = current - 1;
-  const paused = lead.status === "on_hold" || lead.status === "dropped";
+  const finalEventCompleted = Boolean(
+    (lead.eventData?.event8 as { completedAt?: Date | string } | undefined)?.completedAt
+  );
+  const completed = finalEventCompleted ? LEAD_EVENT_LABELS.length : current - 1;
+  const completedSegments = Math.min(completed, LEAD_EVENT_LABELS.length - 1);
+  const paused = !finalEventCompleted && (lead.status === "on_hold" || lead.status === "dropped");
   // Dots sit at the centre of each equal-width column.
   const trackInset = 50 / LEAD_EVENT_LABELS.length;
 
@@ -68,13 +89,13 @@ function LeadStageTrack({ lead }: { lead: Lead }) {
             className="absolute top-1.5 h-0.5 bg-primary-600"
             style={{
               left: `${trackInset}%`,
-              width: `${(completed / (LEAD_EVENT_LABELS.length - 1)) * (100 - 2 * trackInset)}%`,
+              width: `${(completedSegments / (LEAD_EVENT_LABELS.length - 1)) * (100 - 2 * trackInset)}%`,
             }}
           />
         )}
         {LEAD_EVENT_LABELS.map((label, i) => {
           const done = i < completed;
-          const active = !paused && i === completed;
+          const active = !finalEventCompleted && !paused && i === completed;
           return (
             <div key={label} className="relative z-10 flex flex-1 flex-col items-center gap-1.5 px-1">
               <span
@@ -111,19 +132,57 @@ function LeadStageTrack({ lead }: { lead: Lead }) {
 export default function LeadsPage() {
   return (
     <RequireAccess action="view">
-      <LeadsPageContent />
+      <Suspense fallback={<div className="h-32 animate-pulse rounded-xl bg-surface-muted" />}>
+        <LeadsPageContent />
+      </Suspense>
     </RequireAccess>
   );
 }
 
 function LeadsPageContent() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const dashboardPeriod = parseProposalPeriod(searchParams.get("period"));
+  const dashboardPipeline = parseProposalPipelineFilter(searchParams.get("pipeline"));
+  const dashboardEventParam = searchParams.get("events") ?? searchParams.get("event") ?? "";
+  const dashboardEvents = useMemo(
+    () => dashboardEventParam
+      .split(",")
+      .map(Number)
+      .filter((event) => Number.isInteger(event) && event >= 1 && event <= 8),
+    [dashboardEventParam]
+  );
+  const reviewedOnly = searchParams.get("reviewed") === "true";
+  const metricFilter = searchParams.get("metric") === "headcount"
+    ? "headcount"
+    : searchParams.get("metric") === "dlv"
+      ? "dlv"
+      : null;
+  const hasDashboardFilters = dashboardPeriod !== "all" || dashboardPipeline !== "all" || dashboardEvents.length > 0 || reviewedOnly || metricFilter !== null;
+  const dashboardFilterLabels = [
+    dashboardPeriod !== "all" ? PROPOSAL_PERIOD_OPTIONS.find((option) => option.value === dashboardPeriod)?.label : null,
+    dashboardPipeline === "active"
+      ? "Active Pipeline"
+      : dashboardPipeline === "converted"
+        ? "Converted"
+        : dashboardPipeline === "attention"
+          ? "On Hold / Dropped"
+          : null,
+    dashboardEvents.length > 0
+      ? dashboardEvents.length > 1
+        ? `Events ${dashboardEvents.join(", ")}`
+        : `Event ${dashboardEvents[0]}`
+      : null,
+    reviewedOnly ? "Review completed" : null,
+    metricFilter === "headcount" ? "Headcount added" : metricFilter === "dlv" ? "DLV added" : null,
+  ].filter(Boolean) as string[];
   const { can } = useProfile();
   const [leads, setLeads] = useState<Lead[]>([]);
   const [reviews, setReviews] = useState<Map<string, DeepReview>>(new Map());
+  const [proposalIterations, setProposalIterations] = useState<Map<string, number>>(new Map());
   const [loading, setLoading] = useState(true);
   const [seeding, setSeeding] = useState(false);
-  const [filtersOpen, setFiltersOpen] = useState(false);
+  const [filtersOpen, setFiltersOpen] = useState(hasDashboardFilters);
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
   const [sparcFilter, setSparcFilter] = useState("all");
@@ -146,6 +205,12 @@ function LeadsPageContent() {
         .join(" ")
         .toLowerCase();
       return (!normalizedQuery || searchable.includes(normalizedQuery))
+        && proposalInPeriod(lead, dashboardPeriod)
+        && proposalMatchesPipeline(lead, dashboardPipeline)
+        && (dashboardEvents.length === 0 || dashboardEvents.includes(lead.currentEvent ?? 1))
+        && (!reviewedOnly || Boolean(lead.proposalId && reviews.has(lead.proposalId)))
+        && (metricFilter !== "headcount" || (lead.dlvHeadCount ?? 0) > 0)
+        && (metricFilter !== "dlv" || (lead.dlvCost ?? 0) > 0)
         && (statusFilter === "all" || lead.status === statusFilter)
         && (sparcFilter === "all" || sparcOwnerFor(lead) === sparcFilter)
         && (gtmFilter === "all" || (lead.gtmName || "Unassigned") === gtmFilter)
@@ -163,9 +228,9 @@ function LeadsPageContent() {
         default: return new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime();
       }
     });
-  }, [gtmFilter, leads, query, regionFilter, sortBy, sparcFilter, statusFilter, verticalFilter]);
+  }, [dashboardEvents, dashboardPeriod, dashboardPipeline, gtmFilter, leads, metricFilter, query, regionFilter, reviewedOnly, reviews, sortBy, sparcFilter, statusFilter, verticalFilter]);
 
-  const hasActiveFilters = Boolean(query.trim()) || [statusFilter, sparcFilter, gtmFilter, regionFilter, verticalFilter].some((value) => value !== "all") || sortBy !== "updated_desc";
+  const hasActiveFilters = hasDashboardFilters || Boolean(query.trim()) || [statusFilter, sparcFilter, gtmFilter, regionFilter, verticalFilter].some((value) => value !== "all") || sortBy !== "updated_desc";
 
   const resetFilters = () => {
     setQuery("");
@@ -175,26 +240,38 @@ function LeadsPageContent() {
     setRegionFilter("all");
     setVerticalFilter("all");
     setSortBy("updated_desc");
+    if (hasDashboardFilters) router.replace("/leads");
   };
 
   const load = async () => {
     const all = await getLeads();
+    const [proposals, reviewMap] = await Promise.all([getProposals(), getDeepReviewMap()]);
     setLeads(all);
     setLoading(false);
-    setReviews(await getDeepReviewMap());
+    setReviews(reviewMap);
+    setProposalIterations(new Map(proposals.map((proposal) => [
+      proposal.id,
+      Math.max(0, ...proposal.workflowCycles.map((cycle) => cycle.iteration ?? 0)),
+    ])));
   };
 
   useEffect(() => {
     let cancelled = false;
-    getLeads().then((all) => {
+    (async () => {
+      const all = await getLeads();
       if (!cancelled) {
         setLeads(all);
         setLoading(false);
       }
-    });
-    getDeepReviewMap().then((m) => {
-      if (!cancelled) setReviews(m);
-    });
+      const [reviewMap, proposals] = await Promise.all([getDeepReviewMap(), getProposals()]);
+      if (!cancelled) {
+        setReviews(reviewMap);
+        setProposalIterations(new Map(proposals.map((proposal) => [
+          proposal.id,
+          Math.max(0, ...proposal.workflowCycles.map((cycle) => cycle.iteration ?? 0)),
+        ])));
+      }
+    })();
     return () => {
       cancelled = true;
     };
@@ -273,6 +350,17 @@ function LeadsPageContent() {
                 </Button>
               )}
             </div>
+
+            {dashboardFilterLabels.length > 0 && (
+              <div className="mb-4 flex flex-wrap items-center gap-2 rounded-lg border border-primary-200 bg-primary-50/60 px-3 py-2 dark:border-primary-700 dark:bg-primary-500/10">
+                <span className="text-xs font-semibold text-primary-700 dark:text-primary-300">From dashboard:</span>
+                {dashboardFilterLabels.map((label) => (
+                  <span key={label} className="rounded-full bg-surface px-2.5 py-1 text-xs font-medium text-text-secondary shadow-sm">
+                    {label}
+                  </span>
+                ))}
+              </div>
+            )}
 
             <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
               <label className="relative sm:col-span-2">
@@ -376,6 +464,7 @@ function LeadsPageContent() {
                     <Badge className={LEAD_STATUS_BADGE[lead.status]}>
                       {leadStatusLabels[lead.status]}
                     </Badge>
+                    <IterationBadge lead={lead} iterations={proposalIterations} />
                     <ProposalScoreBadge lead={lead} reviews={reviews} />
                   </div>
                   <div

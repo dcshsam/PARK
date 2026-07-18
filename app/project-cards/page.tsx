@@ -224,7 +224,7 @@ export default function ProjectCardsPage() {
                   const config = logConfig[log.type];
                   const Icon = config.icon;
                   return (
-                    <div key={`${log.date}-${log.title}`} className="relative flex gap-3 pb-6 last:pb-0">
+                    <div key={log.id} className="relative flex gap-3 pb-6 last:pb-0">
                       <div className={cn("relative z-10 flex h-9 w-9 shrink-0 items-center justify-center rounded-full ring-4 ring-surface", config.bg, config.color)}><Icon size={15} /></div>
                       <div className="min-w-0 pt-0.5">
                         <div className="flex flex-wrap items-center gap-2"><p className="text-sm font-bold text-text-primary">{log.title}</p><span className="text-[10px] font-semibold uppercase tracking-wide text-text-muted">{log.date}</span></div>

@@ -16,19 +16,19 @@ export function useJarvisContext(): UseJarvisResult {
 
 export function JarvisProvider({ children }: { children: React.ReactNode }) {
   const jarvis = useJarvis();
-  const { toggleListening } = jarvis;
+  const { panelOpen, setPanelOpen } = jarvis;
 
-  // Ctrl+J / Cmd+J — push-to-talk from anywhere in the app.
+  // Ctrl+J / Cmd+J toggles the text assistant from anywhere in the app.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "j") {
         e.preventDefault();
-        toggleListening();
+        setPanelOpen(!panelOpen);
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [toggleListening]);
+  }, [panelOpen, setPanelOpen]);
 
   return <JarvisContext.Provider value={jarvis}>{children}</JarvisContext.Provider>;
 }

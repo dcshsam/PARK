@@ -1,9 +1,10 @@
 import { LEAD_EVENT_LABELS, LEAD_EVENT_SHORT } from "@/lib/lead-events";
-import type { Lead } from "@/lib/types";
+import type { Lead, LeadPhaseComment } from "@/lib/types";
 
 export type ProjectHealth = "On track" | "At risk" | "Needs attention";
 
 export type ProjectLog = {
+  id: string;
   date: string;
   title: string;
   detail: string;
@@ -68,7 +69,10 @@ function eventProgress(currentEvent: number, start: number, end: number) {
 /** Build the weekly presentation model directly from a Proposal Master record. */
 export function buildProjectCardFromLead(lead: Lead): ProjectCard {
   const currentEvent = Math.min(Math.max(lead.currentEvent || 1, 1), 8);
-  const isClosed = lead.status === "converted" || lead.status === "dropped";
+  const finalEventCompleted = Boolean(
+    (lead.eventData?.event8 as { completedAt?: Date | string } | undefined)?.completedAt
+  );
+  const isClosed = finalEventCompleted || lead.status === "converted" || lead.status === "dropped";
   const completedEvents = isClosed ? 8 : currentEvent - 1;
   const owner = lead.sparcOwner || lead.sparcMentor || "Unassigned";
   const isPaused = lead.status === "on_hold" || lead.status === "dropped";
@@ -107,6 +111,7 @@ export function buildProjectCardFromLead(lead: Lead): ProjectCard {
       const data = eventData[`event${number}`] as Record<string, unknown> | undefined;
       if (!data?.completedAt) return [];
       return [{
+        id: `event-${lead.id}-${number}-completed`,
         date: displayDate(data.completedAt as Date | string).replace(/ 202\d$/, ""),
         title: `${LEAD_EVENT_SHORT[index]} completed`,
         detail: number === 7 && typeof data.meetingFeedback === "string"
@@ -119,9 +124,29 @@ export function buildProjectCardFromLead(lead: Lead): ProjectCard {
       }];
     })
     .sort((a, b) => b.timestamp - a.timestamp)
-    .map((log) => ({ date: log.date, title: log.title, detail: log.detail, type: log.type }));
+    .map(({ id, date, title, detail, type }) => ({ id, date, title, detail, type }));
+
+  const phaseCommentLogs: ProjectLog[] = Array.from({ length: 8 })
+    .flatMap((_, index): Array<ProjectLog & { timestamp: number }> => {
+      const data = eventData[`event${index + 1}`] as { phaseComments?: LeadPhaseComment[] } | undefined;
+      return (data?.phaseComments ?? []).flatMap((comment) => {
+        const timestamp = new Date(comment.createdAt).getTime();
+        if (!comment.text?.trim() || Number.isNaN(timestamp)) return [];
+        return [{
+          id: `comment-${comment.id}`,
+          date: displayDate(comment.createdAt).replace(/ 202\d$/, ""),
+          title: `${LEAD_EVENT_SHORT[index]} comment`,
+          detail: comment.author ? `${comment.text} — ${comment.author}` : comment.text,
+          type: "update" as const,
+          timestamp,
+        }];
+      });
+    })
+    .sort((a, b) => b.timestamp - a.timestamp)
+    .map(({ id, date, title, detail, type }) => ({ id, date, title, detail, type }));
 
   const currentLog: ProjectLog = {
+    id: `current-${lead.id}`,
     date: displayDate(lead.updatedAt).replace(/ 202\d$/, ""),
     title: `${LEAD_EVENT_SHORT[currentEvent - 1]} in focus`,
     detail: `Current proposal status is ${lead.status.replaceAll("_", " ")} with ${owner} accountable for the next move.`,
@@ -195,6 +220,8 @@ export function buildProjectCardFromLead(lead: Lead): ProjectCard {
       owner,
       due: "Next call",
     }],
-    logs: [currentLog, ...eventLogs].slice(0, 4),
+    logs: phaseCommentLogs.length
+      ? [...phaseCommentLogs, currentLog, ...eventLogs].slice(0, 4)
+      : [currentLog, ...eventLogs].slice(0, 4),
   };
 }

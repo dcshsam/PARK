@@ -82,9 +82,8 @@ export function getCycleSummary(cycle: WorkflowCycle, events: WorkflowEvent[]): 
   return {
     cycle,
     durationMs,
-    // cycle.iteration is the authoritative count (bumped on rework and on
-    // new-version cycles); fall back to counting rework events.
-    iterations: Math.max(cycle.iteration ?? 1, reworkCount + 1),
+    // Iteration is the number of rejection/rework loops. The initial review is 0.
+    iterations: Math.max(cycle.iteration ?? 0, reworkCount),
   };
 }
 

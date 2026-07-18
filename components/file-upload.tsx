@@ -11,6 +11,7 @@ interface FileUploadProps {
   category: DocumentCategory;
   files: Omit<UploadedFile, "id" | "proposalId" | "uploadedAt">[];
   onChange: (files: Omit<UploadedFile, "id" | "proposalId" | "uploadedAt">[]) => void;
+  required?: boolean;
 }
 
 const categoryStyles: Record<
@@ -148,7 +149,7 @@ async function readFile(file: File): Promise<{ content?: string; extractedText?:
   });
 }
 
-export function FileUpload({ category, files, onChange }: FileUploadProps) {
+export function FileUpload({ category, files, onChange, required = false }: FileUploadProps) {
   const style = categoryStyles[category];
   const inputRef = useRef<HTMLInputElement>(null);
   const [dragOver, setDragOver] = useState(false);
@@ -209,12 +210,16 @@ export function FileUpload({ category, files, onChange }: FileUploadProps) {
           <p className="text-sm font-medium text-text-primary">
             Drop {categoryLabels[category]} here
           </p>
-          <p className="text-xs text-text-tertiary">or click to browse (optional)</p>
+          <p className="text-xs text-text-tertiary">
+            or click to browse {required ? "(required)" : "(optional)"}
+          </p>
         </div>
         <input
           ref={inputRef}
           type="file"
           multiple
+          required={required}
+          aria-required={required}
           accept=".txt,.md,.pdf,.docx,.png,.jpg,.jpeg"
           className="hidden"
           onChange={(e) => handleFiles(e.target.files)}

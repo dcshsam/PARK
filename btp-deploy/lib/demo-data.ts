@@ -39,7 +39,7 @@ function workflowCycle(
   stage: WorkflowCycle["stage"],
   startedAt: Date,
   completedAt?: Date,
-  iteration = 1
+  iteration = 0
 ): WorkflowCycle {
   return {
     id: crypto.randomUUID(),

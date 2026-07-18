@@ -9,8 +9,8 @@ export async function POST(request: NextRequest) {
     const config = resolveRequestConfig(body);
 
     if (body.stream) {
-      // Plain-text delta stream so the voice agent can speak before the reply
-      // finishes. Errors after this point surface as a truncated/empty stream.
+      // Plain-text delta stream for the chat panel. Errors after this point
+      // surface as a truncated or empty stream.
       const stream = await chatWithLlmStream(
         config,
         body.messages ?? [],

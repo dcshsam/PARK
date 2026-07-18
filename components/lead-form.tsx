@@ -33,10 +33,12 @@ import {
   getProposalRegions,
 } from "@/lib/workspace-config";
 import { getTeamMembers, combineAssignableNames } from "@/lib/team-members";
+import { syncEvent1ContributorActivities } from "@/lib/team-activity";
 import type {
   DocumentCategory,
   Lead,
   LeadDocumentCategory,
+  LeadPhaseComment,
   LeadStatus,
   Proposal,
   ReviewCycleType,
@@ -51,7 +53,7 @@ import {
   sampleLeadPreQual,
   buildSampleDueDiligenceItems,
 } from "@/lib/sample-lead";
-import { Loader2, Save, X, Check, ChevronLeft, ChevronRight, Plus, Pencil, Trash2, ExternalLink, Sparkles } from "lucide-react";
+import { Loader2, Save, X, Check, ChevronLeft, ChevronRight, Plus, Pencil, Trash2, ExternalLink, Sparkles, MessageSquare } from "lucide-react";
 
 function formatDuration(start: Date, end: Date): string {
   const diffMs = end.getTime() - start.getTime();
@@ -78,6 +80,18 @@ function getActivePausedEvent(lead: Lead | undefined): number | undefined {
     if (getEventPausePeriods(lead, eventNumber).some((pause) => !pause.endedAt)) return eventNumber;
   }
   return undefined;
+}
+
+function hasPreReviewRequirements(lead: Lead | undefined): boolean {
+  if (!lead || lead.dlvCost === undefined || lead.dlvHeadCount === undefined) return false;
+  const event2 = (lead.eventData?.event2 ?? {}) as {
+    drbApproved?: string;
+    drbApprovedDate?: string;
+  };
+  return Boolean(
+    event2.drbApproved?.trim() &&
+      (event2.drbApproved !== "yes" || event2.drbApprovedDate?.trim())
+  );
 }
 
 function effectiveEventDurationMs(start: Date, end: Date, pauses: EventPausePeriod[], now: Date): number {
@@ -240,6 +254,7 @@ const event1ActivityLabels: Array<[keyof Lead, string]> = [
   ["dlvCost", "DLV cost"],
   ["dlvHeadCount", "DLV headcount"],
   ["sparcOwner", "SPARC owner"],
+  ["contributors", "Proposal contributors"],
   ["vertical", "VD vertical"],
   ["leadType", "Lead type"],
   ["sparcMentor", "SPARC mentor"],
@@ -336,6 +351,83 @@ function EventActivityLog({ eventNumber, activityLog, activityTitle }: { eventNu
   );
 }
 
+function PhaseCommentLog({
+  eventNumber,
+  comments,
+  draft,
+  onDraftChange,
+  onAdd,
+  saving,
+  enabled,
+  error,
+}: {
+  eventNumber: number;
+  comments: LeadPhaseComment[];
+  draft: string;
+  onDraftChange: (value: string) => void;
+  onAdd: () => void;
+  saving: boolean;
+  enabled: boolean;
+  error?: string;
+}) {
+  const today = new Date().toISOString().slice(0, 10);
+  return (
+    <div className="space-y-4 rounded-xl border border-border bg-surface p-4 sm:p-5">
+      <div>
+        <h3 className="flex items-center gap-2 text-sm font-semibold text-text-primary">
+          <MessageSquare size={16} className="text-primary-600" /> Event {eventNumber} comments
+        </h3>
+        <p className="mt-0.5 text-xs text-text-tertiary">
+          Add a dated phase note. Recent notes are included in the one-pager proposal log.
+        </p>
+      </div>
+
+      <div className="grid gap-3 sm:grid-cols-[10rem_1fr]">
+        <div className="space-y-2">
+          <Label htmlFor={`phase-comment-date-${eventNumber}`}>Date</Label>
+          <Input id={`phase-comment-date-${eventNumber}`} type="date" value={today} readOnly disabled />
+        </div>
+        <div className="space-y-2">
+          <Label htmlFor={`phase-comment-${eventNumber}`}>Comment</Label>
+          <Textarea
+            id={`phase-comment-${eventNumber}`}
+            value={draft}
+            onChange={(event) => onDraftChange(event.target.value)}
+            placeholder="Add progress, decisions, risks, customer feedback, or next actions..."
+            rows={3}
+            disabled={!enabled || saving}
+          />
+        </div>
+      </div>
+
+      {error && <p className="text-xs text-red-600 dark:text-red-400">{error}</p>}
+      {!enabled && (
+        <p className="text-xs text-text-tertiary">Save this event first, then comments can be added.</p>
+      )}
+
+      <div className="flex justify-end">
+        <Button type="button" size="sm" onClick={onAdd} disabled={!enabled || !draft.trim() || saving}>
+          {saving ? <Loader2 size={14} className="mr-1.5 animate-spin" /> : <Plus size={14} className="mr-1.5" />}
+          Add Comment
+        </Button>
+      </div>
+
+      {comments.length > 0 && (
+        <div className="divide-y divide-border overflow-hidden rounded-lg border border-border">
+          {[...comments].reverse().map((comment) => (
+            <div key={comment.id} className="bg-surface px-4 py-3">
+              <p className="whitespace-pre-wrap text-sm text-text-primary">{comment.text}</p>
+              <p className="mt-1.5 text-xs text-text-tertiary">
+                {comment.author} · {new Date(comment.createdAt).toLocaleString()}
+              </p>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 /**
  * One-shot prefill left by the Jarvis assistant's create_lead_draft tool.
  * Read (and cleared) only when creating a new lead.
@@ -376,7 +468,11 @@ export function LeadForm({ lead: leadProp }: LeadFormProps) {
   };
 
   const pausedEvent = getActivePausedEvent(lead);
-  const initialStep = pausedEvent ?? lead?.currentEvent ?? 1;
+  const requestedInitialStep = pausedEvent ?? lead?.currentEvent ?? 1;
+  const initialStep =
+    requestedInitialStep >= REVIEW_EVENT_START && !hasPreReviewRequirements(lead)
+      ? REVIEW_EVENT_START - 1
+      : requestedInitialStep;
   const [step, setStep] = useState(initialStep);
   const [submitting, setSubmitting] = useState(false);
   const [clockNow, setClockNow] = useState(() => new Date());
@@ -386,6 +482,9 @@ export function LeadForm({ lead: leadProp }: LeadFormProps) {
   const [draftItem, setDraftItem] = useState<DueDiligenceItem | null>(null);
   const [pauseTargetId, setPauseTargetId] = useState<string | null>(null);
   const [pauseReasonDraft, setPauseReasonDraft] = useState("");
+  const [phaseCommentDrafts, setPhaseCommentDrafts] = useState<Record<number, string>>({});
+  const [phaseCommentSaving, setPhaseCommentSaving] = useState(false);
+  const [phaseCommentError, setPhaseCommentError] = useState("");
 
   // Event 4 — AI-generated proposal deck (PPT) built from Events 1-3.
   const [generatingPpt, setGeneratingPpt] = useState(false);
@@ -465,14 +564,47 @@ export function LeadForm({ lead: leadProp }: LeadFormProps) {
 
   // Event 5 — Proposal Review (SPARC), mapped to the existing Proposal review workflow.
   const [linkedProposal, setLinkedProposal] = useState<Proposal | null>(null);
-  const [loadingProposal, setLoadingProposal] = useState(false);
+  // A persisted proposal link must win over Event 5's auto-create path. Start in
+  // a loading state when reopening a linked lead so the first render cannot
+  // create a replacement proposal before IndexedDB returns the existing one.
+  const [loadingProposal, setLoadingProposal] = useState(Boolean(leadProp?.proposalId));
+  const [proposalLoadError, setProposalLoadError] = useState("");
 
   useEffect(() => {
-    if (!lead?.proposalId) return;
-    Promise.resolve().then(() => setLoadingProposal(true));
-    getProposal(lead.proposalId)
-      .then((p) => setLinkedProposal(p ?? null))
-      .finally(() => setLoadingProposal(false));
+    let cancelled = false;
+    const proposalId = lead?.proposalId;
+
+    if (!proposalId) {
+      Promise.resolve().then(() => {
+        if (cancelled) return;
+        setLinkedProposal(null);
+        setProposalLoadError("");
+        setLoadingProposal(false);
+      });
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    Promise.resolve().then(() => {
+      if (!cancelled) setLoadingProposal(true);
+    });
+    getProposal(proposalId)
+      .then((proposal) => {
+        if (cancelled) return;
+        setLinkedProposal(proposal ?? null);
+        setProposalLoadError(proposal ? "" : "The linked proposal could not be found. Please contact an administrator.");
+      })
+      .catch(() => {
+        if (!cancelled) setProposalLoadError("The linked proposal could not be loaded. Please try again.");
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingProposal(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
   }, [lead?.proposalId]);
 
   const event2Data = (lead?.eventData?.event2 ?? {}) as Record<string, string> & { activityLog?: LeadEventActivity[] };
@@ -524,6 +656,7 @@ export function LeadForm({ lead: leadProp }: LeadFormProps) {
     dlvCost: lead?.dlvCost !== undefined ? String(lead.dlvCost) : "",
     dlvHeadCount: lead?.dlvHeadCount !== undefined ? String(lead.dlvHeadCount) : "",
     sparcOwner: lead?.sparcOwner ?? "",
+    contributors: lead?.contributors ?? [],
     vertical: lead?.vertical ?? "",
     leadType: lead?.leadType ?? "",
     kytesId: lead?.kytesId ?? "",
@@ -597,6 +730,7 @@ export function LeadForm({ lead: leadProp }: LeadFormProps) {
     retroMeetingConductedBy: "",
     retroMeetingSummary: "",
   });
+  const [contributorDraft, setContributorDraft] = useState("");
 
   // Applied post-mount (not in the initializer) to avoid a hydration mismatch.
   useEffect(() => {
@@ -651,6 +785,34 @@ export function LeadForm({ lead: leadProp }: LeadFormProps) {
     const teamMembers = getTeamMembers();
     return combineAssignableNames(getDeliveryHeads(), "proposal_owner", teamMembers);
   }, []);
+  const contributorOptions = useMemo(() => {
+    const configured = getTeamMembers().map((member) => ({
+      id: member.id,
+      name: member.name,
+      team: member.team,
+    }));
+    const configuredNames = new Set(configured.map((member) => member.name));
+    const savedOnly = (lead?.contributors ?? [])
+      .filter((name) => !configuredNames.has(name))
+      .map((name) => ({ id: `saved-${name}`, name, team: "No longer configured" }));
+    return [...configured, ...savedOnly].sort((a, b) => a.name.localeCompare(b.name));
+  }, [lead?.contributors]);
+
+  const addContributor = () => {
+    if (!contributorDraft || form.contributors.includes(contributorDraft)) return;
+    setForm((previous) => ({
+      ...previous,
+      contributors: [...previous.contributors, contributorDraft],
+    }));
+    setContributorDraft("");
+  };
+
+  const removeContributor = (name: string) => {
+    setForm((previous) => ({
+      ...previous,
+      contributors: previous.contributors.filter((contributor) => contributor !== name),
+    }));
+  };
 
   const updateDoc = (category: LeadDocumentCategory, files: Omit<UploadedFile, "id" | "proposalId" | "uploadedAt">[]) => {
     setForm((prev) => ({ ...prev, documents: { ...prev.documents, [category]: files } }));
@@ -761,6 +923,7 @@ export function LeadForm({ lead: leadProp }: LeadFormProps) {
   const showDrbFields = showDrbApproval || showDrbApprovalDate;
   const canAdvance =
     canProceed &&
+    (step !== REVIEW_EVENT_START - 1 || form.proposalAttachments.length > 0) &&
     (step !== REVIEW_EVENT_START - 1 ||
       (deliveryEstimateComplete && drbApprovalComplete));
 
@@ -787,6 +950,7 @@ export function LeadForm({ lead: leadProp }: LeadFormProps) {
     dlvCost: form.dlvCost.trim() ? Number(form.dlvCost) : undefined,
     dlvHeadCount: form.dlvHeadCount.trim() ? Number(form.dlvHeadCount) : undefined,
     sparcOwner: form.sparcOwner || undefined,
+    contributors: form.contributors,
     vertical: form.vertical,
     leadType: form.leadType,
     requirementSummary: form.requirementSummary,
@@ -809,6 +973,7 @@ export function LeadForm({ lead: leadProp }: LeadFormProps) {
     eventData: {
       ...(lead?.eventData ?? {}),
       event2: {
+        ...((lead?.eventData?.event2 ?? {}) as Record<string, unknown>),
         preQualified: form.preQualified as "yes" | "no",
         comments: form.preQualComments.trim(),
         drbApproved: form.drbApproved as "yes" | "no" | "na",
@@ -853,6 +1018,7 @@ export function LeadForm({ lead: leadProp }: LeadFormProps) {
         },
       });
       setLead(created);
+      await syncEvent1ContributorActivities(created);
       return created;
     }
 
@@ -884,7 +1050,7 @@ export function LeadForm({ lead: leadProp }: LeadFormProps) {
             },
           ]
         : event1Data.activityLog ?? [];
-      return persistLead(lead.id, {
+      const updated = await persistLead(lead.id, {
         ...event1Payload,
         currentEvent: nextEvent,
         eventData: {
@@ -892,6 +1058,8 @@ export function LeadForm({ lead: leadProp }: LeadFormProps) {
           event1: { ...(lead.eventData?.event1 ?? {}), completedAt: stepCompletedAt, activityLog: activityOverrides[1] ?? activityLog, pausePeriods: pausePeriodsForEvent(1) },
         },
       });
+      if (updated) await syncEvent1ContributorActivities(updated);
+      return updated;
     }
     if (step === 2) {
       const eventData = buildEvent2Payload(stepCompletedAt).eventData;
@@ -907,7 +1075,11 @@ export function LeadForm({ lead: leadProp }: LeadFormProps) {
         ...buildEvent1Payload(),
         eventData: mergeEventTiming(appendEventActivity(mergeCarriedDrbApproval({
           ...(lead.eventData ?? {}),
-          event3: { items: form.dueDiligenceItems, completedAt: stepCompletedAt },
+          event3: {
+            ...((lead.eventData?.event3 ?? {}) as Record<string, unknown>),
+            items: form.dueDiligenceItems,
+            completedAt: stepCompletedAt,
+          },
         }), "event3", currentProfile?.name ?? "System", ["Due diligence entries", ...deliveryEstimateActivityChanges(), ...drbApprovalActivityChanges()]), 3),
       });
     }
@@ -918,6 +1090,7 @@ export function LeadForm({ lead: leadProp }: LeadFormProps) {
         eventData: mergeEventTiming(appendEventActivity(mergeCarriedDrbApproval({
           ...(lead.eventData ?? {}),
           event4: {
+            ...((lead.eventData?.event4 ?? {}) as Record<string, unknown>),
             startDate: form.proposalStartDate,
             endDate: form.proposalEndDate,
             status: form.proposalStatus,
@@ -963,6 +1136,41 @@ export function LeadForm({ lead: leadProp }: LeadFormProps) {
       }
     } finally {
       setSubmitting(false);
+    }
+  };
+
+  const addPhaseComment = async () => {
+    const text = (phaseCommentDrafts[step] ?? "").trim();
+    if (!lead || !text) return;
+    setPhaseCommentSaving(true);
+    setPhaseCommentError("");
+    try {
+      const eventKey = `event${step}`;
+      const existingEvent = (lead.eventData?.[eventKey] ?? {}) as Record<string, unknown>;
+      const existingComments = (existingEvent.phaseComments ?? []) as LeadPhaseComment[];
+      const comment: LeadPhaseComment = {
+        id: crypto.randomUUID(),
+        text,
+        author: currentProfile?.name ?? "System",
+        createdAt: new Date(),
+      };
+      const updated = await persistLead(lead.id, {
+        eventData: {
+          ...(lead.eventData ?? {}),
+          [eventKey]: {
+            ...existingEvent,
+            phaseComments: [...existingComments, comment],
+          },
+        },
+      });
+      if (updated) {
+        syncSavedEventData(updated, step);
+        setPhaseCommentDrafts((previous) => ({ ...previous, [step]: "" }));
+      }
+    } catch (error) {
+      setPhaseCommentError(error instanceof Error ? error.message : "Could not add the comment.");
+    } finally {
+      setPhaseCommentSaving(false);
     }
   };
 
@@ -1094,6 +1302,7 @@ export function LeadForm({ lead: leadProp }: LeadFormProps) {
     projectType: form.leadType,
     gtmOwner: form.gtmName,
     sparcOwner: form.sparcOwner,
+    contributors: form.contributors,
     sparcMentor: form.sparcMentor,
     proposalReviewer: form.proposalReviewer,
     proposalRegion: form.proposalRegion,
@@ -1115,11 +1324,12 @@ export function LeadForm({ lead: leadProp }: LeadFormProps) {
     await applyWorkflowAction(created.id, { type: "start_proposal_creation" });
     const reviewReady = await applyWorkflowAction(created.id, { type: "submit_for_review" });
 
-    await persistLead(lead.id, {
+    const updatedLead = await persistLead(lead.id, {
       proposalId: created.id,
       currentEvent: Math.max(form.currentEvent, REVIEW_EVENT_START),
       eventData: appendEventActivity(lead.eventData ?? {}, "event5", currentProfile?.name ?? "System", ["Proposal review started"]),
     });
+    if (updatedLead) await syncEvent1ContributorActivities(updatedLead);
     setLinkedProposal(reviewReady);
     setForm((prev) => ({ ...prev, currentEvent: Math.max(prev.currentEvent, REVIEW_EVENT_START) }));
   };
@@ -1131,18 +1341,9 @@ export function LeadForm({ lead: leadProp }: LeadFormProps) {
 
   useEffect(() => {
     if (
-      step >= REVIEW_EVENT_START &&
-      lead &&
-      (!deliveryEstimatePersisted || !drbApprovalPersisted)
-    ) {
-      setStep(REVIEW_EVENT_START - 1);
-    }
-  }, [step, lead, deliveryEstimatePersisted, drbApprovalPersisted]);
-
-  useEffect(() => {
-    if (
       step < REVIEW_EVENT_START ||
       !lead ||
+      Boolean(lead.proposalId) ||
       !deliveryEstimatePersisted ||
       !drbApprovalPersisted ||
       linkedProposal ||
@@ -1164,6 +1365,7 @@ export function LeadForm({ lead: leadProp }: LeadFormProps) {
           technology: proposalInitialValues.technology || undefined,
           projectType: proposalInitialValues.projectType || undefined,
           sparcOwner: proposalInitialValues.sparcOwner || undefined,
+          contributors: proposalInitialValues.contributors,
           sparcMentor: proposalInitialValues.sparcMentor || undefined,
           gtmOwner: proposalInitialValues.gtmOwner || undefined,
           proposalReviewer: proposalInitialValues.proposalReviewer || undefined,
@@ -1210,16 +1412,18 @@ export function LeadForm({ lead: leadProp }: LeadFormProps) {
 
   // Event 7 — Customer Pitch & Feedback: capture the pitch details and unlock
   // the retro event once saved.
-  const savePitch = async () => {
+  const savePitch = async (advance = false) => {
     if (!lead || !form.pitchStartDate) return;
     setSubmitting(true);
     try {
       const eventPaused = pausePeriodsForEvent(PITCH_EVENT).some((pause) => !pause.endedAt);
+      const shouldAdvance = advance && !eventPaused;
       const updated = await persistLead(lead.id, {
-        currentEvent: eventPaused ? PITCH_EVENT : Math.max(form.currentEvent, RETRO_EVENT),
+        currentEvent: shouldAdvance ? Math.max(form.currentEvent, RETRO_EVENT) : form.currentEvent,
         eventData: mergeEventTiming(appendEventActivity({
           ...(lead.eventData ?? {}),
           event7: {
+            ...((lead.eventData?.event7 ?? {}) as Record<string, unknown>),
             startDate: form.pitchStartDate,
             endDate: form.pitchEndDate,
             mode: form.pitchMode || undefined,
@@ -1231,44 +1435,50 @@ export function LeadForm({ lead: leadProp }: LeadFormProps) {
             responseNotes: form.pitchResponseNotes.trim(),
             nextSteps: form.pitchNextSteps.trim(),
             followUpDate: form.pitchFollowUpDate,
-            completedAt: eventPaused ? undefined : event7Data.completedAt ?? new Date(),
+            completedAt: event7Data.completedAt ?? (shouldAdvance ? new Date() : undefined),
           },
         }, "event7", currentProfile?.name ?? "System", ["Pitch details", "Meeting feedback", "Customer response", "Next steps", "Attached pitch deck"]), 7),
       });
       if (updated) {
+        syncSavedEventData(updated, PITCH_EVENT);
         setForm((prev) => ({ ...prev, currentEvent: updated.currentEvent }));
+        if (shouldAdvance) setStep(RETRO_EVENT);
       }
     } finally {
       setSubmitting(false);
     }
   };
 
-  // Event 8 — Proposal Retro & Wrap: record the outcome + retrospective and set
-  // the lead's final status from the outcome.
-  const saveRetro = async () => {
+  // Event 8 — Proposal Retro & Wrap: save retrospective drafts, then apply the
+  // final outcome only when the proposal is explicitly finished.
+  const saveRetro = async (finish = false) => {
     if (!lead || !form.retroOutcome) return;
     setSubmitting(true);
     try {
       const eventPaused = pausePeriodsForEvent(RETRO_EVENT).some((pause) => !pause.endedAt);
+      const shouldFinish = finish && !eventPaused;
+      const wasFinished = Boolean(event8Data.completedAt);
       const outcome = retroOutcomeOptions.find((o) => o.value === form.retroOutcome);
       const updated = await persistLead(lead.id, {
-        status: outcome?.leadStatus ?? lead.status,
+        status: shouldFinish || wasFinished ? outcome?.leadStatus ?? lead.status : lead.status,
         currentEvent: RETRO_EVENT,
         eventData: mergeEventTiming(appendEventActivity({
           ...(lead.eventData ?? {}),
           event8: {
+            ...((lead.eventData?.event8 ?? {}) as Record<string, unknown>),
             outcome: form.retroOutcome,
             meetings: form.retroMeetings,
             wentWell: form.retroWentWell.trim(),
             improve: form.retroImprove.trim(),
             learnings: form.retroLearnings.trim(),
-            completedAt: eventPaused ? undefined : event8Data.completedAt ?? new Date(),
+            completedAt: event8Data.completedAt ?? (shouldFinish ? new Date() : undefined),
           },
         }, "event8", currentProfile?.name ?? "System", ["Final outcome", "Meeting events", "What went well", "What could be improved", "Key learnings"]), 8),
       });
       if (updated) {
         syncSavedEventData(updated, RETRO_EVENT);
         setForm((prev) => ({ ...prev, status: updated.status, currentEvent: updated.currentEvent }));
+        if (shouldFinish) router.push("/leads");
       }
     } finally {
       setSubmitting(false);
@@ -1621,7 +1831,10 @@ export function LeadForm({ lead: leadProp }: LeadFormProps) {
           const stepNumber = index + 1;
           const active = step === stepNumber;
           const unlocked = stepNumber <= form.currentEvent;
-          const completed = stepNumber < step || (stepNumber < form.currentEvent && !active);
+          const completed =
+            Boolean(eventTimestampForView(stepNumber)) ||
+            stepNumber < step ||
+            (stepNumber < form.currentEvent && !active);
           return (
             <div key={label} className="flex items-center">
               <button
@@ -1633,10 +1846,10 @@ export function LeadForm({ lead: leadProp }: LeadFormProps) {
                 <div
                   className={cn(
                     "flex h-10 w-10 shrink-0 items-center justify-center rounded-full border-2 font-semibold shadow-md transition-all",
-                    active
-                      ? "border-amber-400 bg-amber-400 text-primary-900 ring-4 ring-amber-100"
-                      : completed
-                        ? "border-transparent bg-primary-600 text-white"
+                    completed
+                      ? "border-transparent bg-primary-600 text-white"
+                      : active
+                        ? "border-amber-400 bg-amber-400 text-primary-900 ring-4 ring-amber-100"
                         : unlocked
                           ? "border-border bg-surface text-text-secondary hover:border-primary-300"
                           : "border-border bg-surface-muted text-text-muted"
@@ -1856,20 +2069,35 @@ export function LeadForm({ lead: leadProp }: LeadFormProps) {
                 />
               </div>
             </CardContent>
-            <CardFooter className="flex items-center justify-between">
+            <CardFooter className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <p className="text-xs text-text-tertiary">
                 {event8Data.completedAt
-                  ? "Retro completed — you can still update it."
-                  : "Completing the retro sets the lead's final status from the outcome."}
+                  ? "Proposal finished — you can still update the retrospective details."
+                  : "Save keeps the proposal open. Finish Proposal applies the selected final outcome."}
               </p>
-              <Button type="button" onClick={saveRetro} disabled={submitting || !form.retroOutcome}>
-                {submitting ? (
-                  <Loader2 size={16} className="mr-2 animate-spin" />
-                ) : (
+              <div className="flex shrink-0 items-center gap-2">
+                <Button
+                  type="button"
+                  variant="secondary"
+                  onClick={() => saveRetro(false)}
+                  disabled={submitting || !form.retroOutcome}
+                >
+                  {submitting ? (
+                    <Loader2 size={16} className="mr-2 animate-spin" />
+                  ) : (
+                    <Save size={16} className="mr-2" />
+                  )}
+                  {event8Data.completedAt ? "Update Retro" : "Save Retro"}
+                </Button>
+                <Button
+                  type="button"
+                  onClick={() => saveRetro(true)}
+                  disabled={submitting || !form.retroOutcome || Boolean(activeEventPause)}
+                >
                   <Check size={16} className="mr-2" />
-                )}
-                {event8Data.completedAt ? "Update Retro" : "Complete Retro & Wrap"}
-              </Button>
+                  {event8Data.completedAt ? "Completed" : "Finish Proposal"}
+                </Button>
+              </div>
             </CardFooter>
           </Card>
         </div>
@@ -2035,20 +2263,34 @@ export function LeadForm({ lead: leadProp }: LeadFormProps) {
                 />
               </div>
             </CardContent>
-            <CardFooter className="flex items-center justify-between">
+            <CardFooter className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <p className="text-xs text-text-tertiary">
                 {event7Data.completedAt
-                  ? "Pitch recorded — you can still update it."
-                  : "Saving the pitch unlocks the Proposal Retro & Wrap event."}
+                  ? "Customer Pitch completed — you can still update it or continue to Retro & Wrap."
+                  : "Save keeps this event open. Next completes it and opens Proposal Retro & Wrap."}
               </p>
-              <Button type="button" onClick={savePitch} disabled={submitting || !form.pitchStartDate}>
-                {submitting ? (
-                  <Loader2 size={16} className="mr-2 animate-spin" />
-                ) : (
-                  <Save size={16} className="mr-2" />
-                )}
-                {event7Data.completedAt ? "Update Customer Pitch" : "Save Customer Pitch"}
-              </Button>
+              <div className="flex shrink-0 items-center gap-2">
+                <Button
+                  type="button"
+                  variant="secondary"
+                  onClick={() => savePitch(false)}
+                  disabled={submitting || !form.pitchStartDate}
+                >
+                  {submitting ? (
+                    <Loader2 size={16} className="mr-2 animate-spin" />
+                  ) : (
+                    <Save size={16} className="mr-2" />
+                  )}
+                  {event7Data.completedAt ? "Update Customer Pitch" : "Save Customer Pitch"}
+                </Button>
+                <Button
+                  type="button"
+                  onClick={() => savePitch(true)}
+                  disabled={submitting || !form.pitchStartDate || Boolean(activeEventPause)}
+                >
+                  Next <ChevronRight size={16} className="ml-1" />
+                </Button>
+              </div>
             </CardFooter>
           </Card>
         </div>
@@ -2093,9 +2335,21 @@ export function LeadForm({ lead: leadProp }: LeadFormProps) {
                 onChange={handleLinkedProposalChange}
                 hideCreationPhase
                 visibleCycles={[REVIEW_EVENT_CYCLE[step] ?? "proposal"]}
-                beforeHistory={<AiReviewPanel proposalId={linkedProposal.id} embedded />}
+                beforeHistory={
+                  <AiReviewPanel
+                    key={`${linkedProposal.id}-${linkedProposal.documents.length}-${linkedProposal.workflowEvents.length}`}
+                    proposalId={linkedProposal.id}
+                    embedded
+                  />
+                }
               />
             </>
+          ) : proposalLoadError ? (
+            <Card>
+              <CardContent className="py-8 text-center text-sm text-danger-600">
+                {proposalLoadError}
+              </CardContent>
+            </Card>
           ) : null}
         </div>
       ) : (
@@ -2234,6 +2488,71 @@ export function LeadForm({ lead: leadProp }: LeadFormProps) {
                   onChange={(e) => setForm({ ...form, kytesId: e.target.value })}
                   placeholder="e.g. KYT-2026-0001"
                 />
+              </div>
+
+              <div className="space-y-4 rounded-xl border border-border bg-surface-muted/30 p-4">
+                <div>
+                  <h3 className="text-sm font-semibold text-text-primary">Proposal contributors</h3>
+                  <p className="mt-0.5 text-xs text-text-tertiary">
+                    Select every configured team member working on this proposal. Each selection is added to Team Activity.
+                  </p>
+                </div>
+                {contributorOptions.length === 0 ? (
+                  <p className="rounded-lg border border-dashed border-border px-3 py-3 text-sm text-text-tertiary">
+                    No team members are configured. Add members in Settings → Team Members first.
+                  </p>
+                ) : (
+                  <div className="space-y-3">
+                    <div className="flex flex-wrap gap-2">
+                      {form.contributors.length === 0 && (
+                        <span className="text-xs italic text-text-muted">No contributors selected.</span>
+                      )}
+                      {form.contributors.map((name) => (
+                        <span
+                          key={name}
+                          className="inline-flex items-center gap-1 rounded-full bg-surface-muted px-2.5 py-1 text-xs font-medium text-text-secondary ring-1 ring-border"
+                        >
+                          {name}
+                          <button
+                            type="button"
+                            onClick={() => removeContributor(name)}
+                            className="rounded-full p-0.5 transition-colors hover:bg-border"
+                            aria-label={`Remove ${name}`}
+                          >
+                            <X size={12} />
+                          </button>
+                        </span>
+                      ))}
+                    </div>
+
+                    <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                      <Select
+                        value={contributorDraft}
+                        onChange={(event) => setContributorDraft(event.target.value)}
+                        className="flex-1"
+                        aria-label="Select proposal contributor"
+                      >
+                        <option value="">Select a team member...</option>
+                        {contributorOptions
+                          .filter((member) => !form.contributors.includes(member.name))
+                          .map((member) => (
+                            <option key={member.id} value={member.name}>
+                              {member.name} ({member.team})
+                            </option>
+                          ))}
+                      </Select>
+                      <Button
+                        type="button"
+                        onClick={addContributor}
+                        size="sm"
+                        variant="secondary"
+                        disabled={!contributorDraft}
+                      >
+                        <Plus size={14} className="mr-1.5" /> Add Contributor
+                      </Button>
+                    </div>
+                  </div>
+                )}
               </div>
 
               <div className="space-y-4 rounded-xl border border-border bg-surface-muted/30 p-4">
@@ -2640,10 +2959,13 @@ export function LeadForm({ lead: leadProp }: LeadFormProps) {
 
               <div className="grid gap-4 sm:grid-cols-2">
                 <div className="space-y-2">
-                  <Label htmlFor="proposalAttachment">Proposal Attachment</Label>
+                  <Label htmlFor="proposalAttachment">
+                    Proposal Attachment <span className="text-red-500">*</span>
+                  </Label>
                   <FileUpload
                     category="lead_proposal"
                     files={form.proposalAttachments}
+                    required
                     onChange={(files) =>
                       setForm((prev) => ({
                         ...(files.length ? stampProposalDates(prev) : prev),
@@ -2651,6 +2973,11 @@ export function LeadForm({ lead: leadProp }: LeadFormProps) {
                       }))
                     }
                   />
+                  {form.proposalAttachments.length === 0 && (
+                    <p className="text-xs text-amber-700 dark:text-amber-300">
+                      Upload a proposal document or generate one above to enable Next and begin review.
+                    </p>
+                  )}
                 </div>
               </div>
             </div>
@@ -2684,11 +3011,26 @@ export function LeadForm({ lead: leadProp }: LeadFormProps) {
       )}
 
       {step >= 1 && (
-        <EventActivityLog
-          eventNumber={step}
-          activityTitle={step === 1 ? "Lead Initiation" : undefined}
-          activityLog={activityOverrides[step] ?? ((lead?.eventData?.[`event${step}`] ?? {}) as { activityLog?: LeadEventActivity[] }).activityLog}
-        />
+        <div className="space-y-6">
+          <PhaseCommentLog
+            eventNumber={step}
+            comments={((lead?.eventData?.[`event${step}`] ?? {}) as { phaseComments?: LeadPhaseComment[] }).phaseComments ?? []}
+            draft={phaseCommentDrafts[step] ?? ""}
+            onDraftChange={(value) => {
+              setPhaseCommentDrafts((previous) => ({ ...previous, [step]: value }));
+              setPhaseCommentError("");
+            }}
+            onAdd={addPhaseComment}
+            saving={phaseCommentSaving}
+            enabled={Boolean(lead)}
+            error={phaseCommentError}
+          />
+          <EventActivityLog
+            eventNumber={step}
+            activityTitle={step === 1 ? "Lead Initiation" : undefined}
+            activityLog={activityOverrides[step] ?? ((lead?.eventData?.[`event${step}`] ?? {}) as { activityLog?: LeadEventActivity[] }).activityLog}
+          />
+        </div>
       )}
 
       {draftItem && (

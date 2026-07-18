@@ -22,8 +22,11 @@ export function LeadStatusLadderSettings() {
   const [mounted, setMounted] = useState(false);
 
   useEffect(() => {
-    setLadder(getLeadEventStatuses());
-    setMounted(true);
+    const frame = window.requestAnimationFrame(() => {
+      setLadder(getLeadEventStatuses());
+      setMounted(true);
+    });
+    return () => window.cancelAnimationFrame(frame);
   }, []);
 
   const update = (index: number, status: LeadStatus) => {

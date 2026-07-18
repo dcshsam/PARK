@@ -48,7 +48,7 @@ export async function chatWithLlm(
 
 /**
  * Streaming variant of chatWithLlm: resolves to a stream of UTF-8 text deltas.
- * Lets the Jarvis voice agent start speaking before the reply finishes.
+ * Streams assistant response text to the client as it is generated.
  * SAP AI Core deployments vary in SSE support, so that provider emits the
  * complete reply as a single chunk instead.
  */

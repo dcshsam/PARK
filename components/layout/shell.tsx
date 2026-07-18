@@ -297,7 +297,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
         </div>
       )}
 
-      {/* Jarvis voice assistant */}
+      {/* Jarvis text assistant */}
       <JarvisButton />
       <JarvisPanel />
     </div>

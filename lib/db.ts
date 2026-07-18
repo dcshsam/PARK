@@ -72,10 +72,21 @@ class ProposalDatabase extends Dexie {
     this.version(10).stores({
       leads: "++id, kytesId, status, createdAt, updatedAt",
     });
-    // v11: Jarvis voice assistant conversation log.
+    // v11: Jarvis assistant conversation log.
     this.version(11).stores({
       jarvisMessages: "++id, createdAt",
     });
+    // v12: iterations count rejections/rework loops, so the initial review is 0.
+    // Existing records used a one-based counter and must be shifted once.
+    this.version(12)
+      .stores({
+        workflowCycles: "++id, proposalId, cycleType, iteration, startedAt, [proposalId+cycleType]",
+      })
+      .upgrade((transaction) =>
+        transaction.table("workflowCycles").toCollection().modify((cycle) => {
+          cycle.iteration = Math.max(0, Number(cycle.iteration ?? 1) - 1);
+        })
+      );
   }
 }
 
@@ -227,7 +238,7 @@ export async function getProposal(id: string): Promise<Proposal | undefined> {
       id: crypto.randomUUID(),
       proposalId: id,
       cycleType,
-      iteration: 1,
+      iteration: 0,
       stage,
       startedAt: record.createdAt ? new Date(record.createdAt) : now,
       completedAt: stage === "approved" || stage === "rejected" ? now : undefined,
@@ -680,7 +691,10 @@ export async function updateLead(
 
 export async function deleteLead(id: string): Promise<void> {
   const db = getDb();
-  await db.leads.delete(id);
+  await db.transaction("rw", [db.leads, db.teamActivities], async () => {
+    await db.teamActivities.filter((activity) => activity.leadId === id).delete();
+    await db.leads.delete(id);
+  });
 }
 
 export async function getTeamActivities(): Promise<TeamActivity[]> {
